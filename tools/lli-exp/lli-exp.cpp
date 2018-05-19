@@ -1,4 +1,12 @@
-#include "llvm/Analysis/CallGraph.h"
+//===- lli-exp.cpp - Experimental lli tool -------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+//
+// Description ...
+//
+//===----------------------------------------------------------------------===//
+
+#include "CallGraphUtils.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
 #include "llvm/Type.h"
@@ -6,8 +14,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/IRReader.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Signals.h"
 
 #include <cerrno>
@@ -61,13 +69,8 @@ int main(int argc, char **argv, char * const *envp) {
     exit(1);
   }
 
-  // Intialize a CallGraph.
-  CallGraph *cg = NewBasicCallGraph(*Mod);
-
-  // Print the CallGraph to stdout.
-  raw_ostream &OS = outs();
-  cg->print(OS, Mod);
-  delete cg;
+  // Try using our utility library.
+  PrintCallGraph(*Mod);
 
   // Success.
   exit(0);

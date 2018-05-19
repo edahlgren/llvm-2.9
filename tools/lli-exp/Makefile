@@ -8,7 +8,9 @@
 ##===----------------------------------------------------------------------===##
 
 LEVEL    := ../..
+
 TOOLNAME := lli-exp
+
 LINK_COMPONENTS := ipa mcjit jit interpreter nativecodegen bitreader asmparser selectiondag
 
 # Enable JIT support
