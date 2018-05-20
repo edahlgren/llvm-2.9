@@ -6,33 +6,37 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef CALL_GRAPH_UTILS_H
-#define CALL_GRAPH_UTILS_H
+#ifndef ANALYSIS_H
+#define ANALYSIS_H
 
+#include "llvm/Analysis/CallGraph.h"
 #include "llvm/Module.h"
+#include "llvm/Support/raw_ostream.h"
 
-namespace llvm {
+typedef std::map<const llvm::Function *, llvm::CallGraphNode *> FunctionsMap;
 
 // FunctionGraph contains a call graph of functions.
 class FunctionGraph {
 public:
   // root is the
-  CallGraphNode *root;
+  llvm::CallGraphNode *root;
 
   // ext is the
-  CallGraphNode *ext;
+  llvm::CallGraphNode *ext;
 
   // calls Ext is the
-  CallGraphNode *calls_ext;
+  llvm::CallGraphNode *calls_ext;
 
   // functionMap is the
-  std::map<const Function *, CallGraphNode *> functions;
+  FunctionsMap functions;
   
   // Construct the graph.
   FunctionGraph() {
+    llvm::Function *NullFunction = 0;  
+
     root = 0;
-    ext = new CallGraphNode(const_cast<Function*>(0));
-    calls_ext = new CallGraphNode(0);
+    ext = new llvm::CallGraphNode(const_cast<llvm::Function *>(NullFunction));
+    calls_ext = new llvm::CallGraphNode(0);
   }
   
   // Destroy the graph.
@@ -50,22 +54,23 @@ public:
       return;
     }
     
-    // Deallocate added functions.
-    for (functionMap::iterator i = functions.begin(), e = functions.end();
+    // Deallocate added CallGraphNodes.
+    for (FunctionsMap::iterator i = functions.begin(), e = functions.end();
          i != e; ++i) {
+      i->second->allReferencesDropped();
       delete i->second;
+      i->second = 0;
     }
     
     // Deallocate the map.
     functions.clear();    
   }
-}
+};
 
-void link_function_to_graph(FunctionGraph *fg, Function *F);
+void link_function_to_graph(FunctionGraph *fg, llvm::Function *F);
 
-// print_entire_call_graph uses BasicCallGraph to print a Module's functions.  
-void print_module_call_graph(Module &M);
-  
-} // end llvm namespace
+void print_graph(FunctionGraph *fg, llvm::raw_ostream &os);
 
-#endif
+void print_module_call_graph(llvm::Module &M);
+
+#endif // end ANALYSIS_H

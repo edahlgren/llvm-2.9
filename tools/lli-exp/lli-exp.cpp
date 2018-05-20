@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CallGraphUtils.h"
+#include "analysis.h"
+
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
 #include "llvm/Type.h"
@@ -41,7 +42,7 @@ static void do_shutdown() {
 #endif
 }
 
-static LLVMContext context() {
+static LLVMContext &context() {
   return getGlobalContext();
 }
 
@@ -52,11 +53,11 @@ static std::string get_input_filename(int argc, char **argv) {
   return InputFile;
 }
 
-static Module *load_module(LLVMContext ctx, std::string filename) {
+static Module *load_module(LLVMContext &ctx, std::string filename) {
   SMDiagnostic err;
   Module *m = ParseIRFile(filename, err, ctx);
   if (!m) {
-    err.Print(errs());
+    err.Print(filename.c_str(), errs());
     return m;
   }
 
@@ -95,12 +96,12 @@ int main(int argc, char **argv, char * const *envp) {
   FunctionGraph *fg = new FunctionGraph();
 
   // Link the Module's functions into the graph.
-  for (Module::iterator i = m.begin(), e = m.end(); i != e; ++i) {
+  for (Module::iterator i = m->begin(), e = m->end(); i != e; ++i) {
     link_function_to_graph(fg, (Function *)i);
   }
 
   // Then print what we constructed. This is a very naive map.
-  print_graph(fs, outs());
+  print_graph(fg, outs());
   
   // Delete it when we're done.
   delete fg;

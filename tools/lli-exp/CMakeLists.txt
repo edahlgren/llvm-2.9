@@ -2,5 +2,5 @@ set(LLVM_LINK_COMPONENTS ipa mcjit jit interpreter nativecodegen bitreader asmpa
 
 add_llvm_tool(lli-exp
   lli-exp.cpp
-  CallGraphUtils.cpp
+  analysis.cpp
 )
