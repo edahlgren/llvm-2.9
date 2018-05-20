@@ -1,4 +1,4 @@
-//===- CallGraphUtils.cpp - Utilities for call graphs ---------------------===//
+//===- analysis.cpp - Module analysis utilities ---------------------------===//
 //
 //===----------------------------------------------------------------------===//
 //
@@ -17,6 +17,66 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+// ---- Predicates
+
+// user_is_a_caller returns true if the user (of a value) is a function (with
+// or without exception handling) and otherwise returns false.
+//
+// This is useful for finding functions that contain or call values of interest.
+bool user_is_a_caller(llvm::Value::use_iterator i) {
+  // CallInst:   This instruction represents a simple function call.
+  //             ".. it is used to cause control flow to transfer to a specific
+  //             function, with its incoming arguments bound to specified
+  //             values. Upon a 'ret' instruction in the called function,
+  //             control flow continues with the instruction after the function
+  //             call, and the return value of the function is bound to the
+  //             result argument."
+  //               - docs/LangRef.html#call-instruction
+  //
+  // InvokeInst: "The 'invoke' instruction causes control to transfer to a
+  //             specified function, with the possibility of control flow
+  //             transfer to either the 'normal' label or the 'exception' label.
+  //             If the callee function returns with the 'ret' instruction,
+  //             control flow will return to the 'normal' label. If the callee
+  //             (or any indirect callees) returns via the 'resume' instruction
+  //             or other exception handling mechanism, control is interrupted
+  //             and continued at the nearest 'exception' label. The 'exception'
+  //             label is a landing pad for the exception."
+  //               - docs/LangRef.html#invoke-instruction
+  llvm::User *u = *i;
+  return (llvm::isa<llvm::CallInst>(u) || llvm::isa<llvm::InvokeInst>(u));
+}
+
+// user_calls_this_function returns true iff the user is the caller of a value
+// that is also the callee.
+//
+// This isn't true for users of functions as parameters or fields (e.g. Linux
+// structures full of function pointers).
+//
+// This is useful for analyzing whether a function is a true caller of another
+// function.
+bool user_calls_this_function(llvm::Value::use_iterator i) {
+  llvm::User *u = *i;
+  return llvm::CallSite(llvm::cast<llvm::Instruction>(u)).isCallee(i);
+}
+
+// function_is_undefined returns true iff this function is not a built-in llvm
+// intrinsic function (see include/llvm/Intrinsics.td) and has been declared
+// but has not been defined.
+//
+// This is normally the case if the function is in a header that is separate from
+// the actual implementation.
+//
+// This is useful to know before attempting to analyze the contents of a function.
+bool function_is_undefined(llvm::Function *f) {
+  return (f->isDeclaration() && !f->isIntrinsic());
+}
+
+// ---- Wrappers
+
+// get_or_cast_function finds a f in the FunctionGraph, returning its CallGraphNode
+// wrapper, or wraps f in a new CallGraphNode. It does not link f to the FunctionGraph
+// in any way.
 llvm::CallGraphNode *get_or_cast_function(FunctionGraph *fg, const llvm::Function *f) {
   llvm::CallGraphNode *&cgn = fg->functions[f];
   if (cgn) {
@@ -26,53 +86,12 @@ llvm::CallGraphNode *get_or_cast_function(FunctionGraph *fg, const llvm::Functio
   return cgn;
 }
 
-// These are predicates that help us understand how values in the intermediate
-// representation are used.
+// ---- Public interface
 
-// user_is_a_caller returns true if the user (of a value) is a function (with
-// or without exception handling) and otherwise returns false.
-//
-// Notes:
-//
-// CallInst:   This instruction represents a simple function call.
-//             ".. it is used to cause control flow to transfer to a specific
-//             function, with its incoming arguments bound to specified
-//             values. Upon a 'ret' instruction in the called function,
-//             control flow continues with the instruction after the function
-//             call, and the return value of the function is bound to the
-//             result argument."
-//               - docs/LangRef.html#call-instruction
-//
-// InvokeInst: "The 'invoke' instruction causes control to transfer to a
-//             specified function, with the possibility of control flow
-//             transfer to either the 'normal' label or the 'exception' label.
-//             If the callee function returns with the 'ret' instruction,
-//             control flow will return to the 'normal' label. If the callee
-//             (or any indirect callees) returns via the 'resume' instruction
-//             or other exception handling mechanism, control is interrupted
-//             and continued at the nearest 'exception' label. The 'exception'
-//             label is a landing pad for the exception."
-//               - docs/LangRef.html#invoke-instruction
-//
-bool user_is_a_caller(llvm::Value::use_iterator i) {
-  llvm::User *u = *i;
-  return (llvm::isa<llvm::CallInst>(u) || llvm::isa<llvm::InvokeInst>(u));
-}
-
-// user_calls_this_function returns true iff the user is the caller of the value
-// and the value is the callee.
-bool user_calls_this_function(llvm::Value::use_iterator i) {
-  llvm::User *u = *i;
-  return llvm::CallSite(llvm::cast<llvm::Instruction>(u)).isCallee(i);
-}
-
-// function_is_undefined 
-bool function_is_undefined(llvm::Function *f) {
-  return (f->isDeclaration() && !f->isIntrinsic());
-}
-
+// link_function_to_graph links f as a node in the FunctionGraph by connecting
+// it to its callers and its callees.
 void link_function_to_graph(FunctionGraph *fg, llvm::Function *f) {
-  // Cast the function to a vertex in the graph.
+  // Cast the function to a node that can be linked in the graph.
   llvm::CallGraphNode *node = get_or_cast_function(fg, f);
 
   // Does the function have external linkage?
@@ -172,10 +191,14 @@ void print_node(llvm::CallGraphNode *node, llvm::raw_ostream &os) {
   os << "\n";
 }
 
+// decorate_graph adds a border to a printed graph.
 void decorate_graph(llvm::raw_ostream &os) {
   os << "|---------------------------------------------------------------------|\n";
 }
 
+// print_graph traverses the graph, first to the root, and then to nodes in
+// a consistent order, functions with the lowest address in the intermediate
+// representation first.
 void print_graph(FunctionGraph *fg, llvm::raw_ostream &os) {
   // Mark the beginning of the graph.
   decorate_graph(os);

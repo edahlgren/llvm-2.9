@@ -103,7 +103,7 @@ int main(int argc, char **argv, char * const *envp) {
   // Then print what we constructed. This is a very naive map.
   print_graph(fg, outs());
   
-  // Delete it when we're done.
+  // Delete the graph when we're done.
   delete fg;
 
   // Success.
