@@ -33,6 +33,9 @@ using namespace llvm;
 namespace {
   cl::opt<std::string>
   InputFile(cl::desc("<input bitcode>"), cl::Positional, cl::init("-"));
+
+  cl::opt<bool>
+  PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(false));
 }
 
 static void do_shutdown() {
@@ -46,7 +49,7 @@ static LLVMContext &context() {
   return getGlobalContext();
 }
 
-static std::string get_input_filename(int argc, char **argv) {
+static std::string parse_args(int argc, char **argv) {
   // Parse the command line, including the InputFile.
   cl::ParseCommandLineOptions(argc, argv,
                               "llvm interpreter & dynamic compiler\n");
@@ -81,7 +84,7 @@ int main(int argc, char **argv, char * const *envp) {
   atexit(do_shutdown);
 
   // Parse the input filename from the commandline arguments.
-  std::string filename = get_input_filename(argc, argv);  
+  std::string filename = parse_args(argc, argv);  
   
   // Load the module from the file.
   Module *m = load_module(ctx, filename);
@@ -100,9 +103,16 @@ int main(int argc, char **argv, char * const *envp) {
     link_function_to_graph(fg, (Function *)i);
   }
 
-  // Then print what we constructed. This is a very naive map.
-  print_graph(fg, outs());
-  
+  // Then print what we constructed.
+  if (PrintGraphML) {
+    // Print the graph in a GraphML format. This is parseable by
+    // many other tools.
+    print_graphml(fg, outs());
+  } else {
+    // Default to a naive, human-readable map.
+    print_graph(fg, std::cout);
+  }
+    
   // Delete the graph when we're done.
   delete fg;
 

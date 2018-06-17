@@ -35,7 +35,6 @@ public:
   // Construct the graph.
   FunctionGraph() {
     llvm::Function *NullFunction = 0;  
-
     root = 0;
     ext = new llvm::CallGraphNode(const_cast<llvm::Function *>(NullFunction));
     calls_ext = new llvm::CallGraphNode(0);
@@ -72,5 +71,7 @@ public:
 void link_function_to_graph(FunctionGraph *fg, llvm::Function *F);
 
 void print_graph(FunctionGraph *fg, llvm::raw_ostream &os);
+
+void print_graphml(FunctionGraph *fg, llvm::raw_ostream &os);
 
 #endif // end ANALYSIS_H
