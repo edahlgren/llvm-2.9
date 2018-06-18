@@ -191,9 +191,6 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilder::build(MachineFunction *mf,
                                                 const LiveIntervals *lis,
                                                 const MachineLoopInfo *loopInfo,
                                                 const RegSet &vregs) {
-
-  typedef std::vector<const LiveInterval*> LIVector;
-
   MachineRegisterInfo *mri = &mf->getRegInfo();
   const TargetRegisterInfo *tri = mf->getTarget().getRegisterInfo();  
 

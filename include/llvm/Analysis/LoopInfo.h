@@ -288,7 +288,6 @@ public:
 
     // Loop over the predecessors of the header node...
     BlockT *Header = getHeader();
-    typedef GraphTraits<BlockT*> BlockTraits;
     typedef GraphTraits<Inverse<BlockT*> > InvBlockTraits;
     for (typename InvBlockTraits::ChildIteratorType PI =
          InvBlockTraits::child_begin(Header),
