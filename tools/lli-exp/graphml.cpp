@@ -16,11 +16,20 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphml.hpp>
 
+#ifdef BOOST_NO_EXCEPTIONS
+void
+boost::throw_exception(std::exception const& ex)
+{
+  std::cout << ex.what() << std::endl;
+  abort();
+}
+#endif
+
 // Define properties for vertices.
 struct VertexProperties {
   std::string name;
   bool root;
-  int refs;
+  unsigned int refs;
 };
 
 // Define properties for edges.
@@ -47,7 +56,7 @@ typedef boost::adjacency_list<
   // This is the set of properties attached to each vertex.
   VertexProperties,
   // This is the set of properties attached to each edge.
-  EdgeProperties,
+  EdgeProperties
   > Graph;
 
 // Define iterators over vertices and edges.
@@ -61,16 +70,17 @@ Graph *make_boost_graph(FunctionGraph *fg) {
   // Keep a cached of vertices that we've created so that we can add
   // edges to them as we find connections.
   std::unordered_map<uintptr_t, Graph::vertex_descriptor> functions;
-  typedef std::unordered_map<std::string,double>::const_iterator functions_iterator;
+  //typedef std::unordered_map<std::string,double>::const_iterator functions_iterator;
   
   // Iterate through all of the functions.
   for (FunctionsMap::iterator i = fg->functions.begin(), e = fg->functions.end(); i != e; ++i) {
     // Get the source function.
-    llvm::Function *f = i->second->getFunction();
+    llvm::CallGraphNode *node = i->second; 
+    llvm::Function *f = node->getFunction();
 
     // Get the ID of te function and check if we've seen it before.
     uintptr_t id = reinterpret_cast<std::uintptr_t>(f);
-    functions_iterator cached_source = functions.find(id);
+    auto cached_source = functions.find(id);
 
     // Get a pointer to the source vertex.
     Graph::vertex_descriptor source;
@@ -79,35 +89,36 @@ Graph *make_boost_graph(FunctionGraph *fg) {
       source = cached_source->second;
     } else {
       // Otherwise add the vertex.
-      VertexProperties vp = {
-        .name = f->getName(),
-        .root = f == fg->root->getFunction : true ? false,
-        .refs = f->getNumReferences(),
-      };
-      source = boost::add_vertex(vp, g);
+      VertexProperties vp = {};
+      vp.name = f->getName();
+      vp.root = f == fg->root->getFunction() ? true : false;
+      vp.refs = node->getNumReferences();
+
+      source = boost::add_vertex(vp, *g);
       functions[id] = source;
     }
 
     // Iterate through callees (targets).
-    for (llvm::CallGraphNode::const_iterator i = node->begin(), e = node->end(); i != e; ++i) {
+    for (llvm::CallGraphNode::const_iterator j = node->begin(), e = node->end(); j != e; ++j) {
       // Get a target function.
-      llvm::Function *fi = i->second->getFunction();
+      llvm::CallGraphNode *ni = j->second;
+      llvm::Function *fi = ni->getFunction();
 
       // Get a pointer to the target.
       Graph::vertex_descriptor target;
       if (!fi) {
         // This a dud. We don't know where it points to because it's likely outside
         // of this module. We'll use a placeholder vertex with a ?? name.
-        VertexProperties vp = {
-          .name = "??",
-          .root = false,
-          .refs = 1,
-        };
-        target = boost::add_vertex(vp, g);        
+        VertexProperties vp = {};
+        vp.name = "??";
+        vp.root = false;
+        vp.refs = 1;
+
+        target = boost::add_vertex(vp, *g);        
       } else {
         // Same as above, see if it's cached.
         uintptr_t id = reinterpret_cast<std::uintptr_t>(fi);
-        functions_iterator cached_target = functions.find(id);
+        auto cached_target = functions.find(id);
 
         // Get a pointer to the target vertex.
         if (cached_target != functions.end()) {
@@ -115,18 +126,18 @@ Graph *make_boost_graph(FunctionGraph *fg) {
           target = cached_target->second;
         } else {
           // Otherwise add the vertex.
-          VertexProperties vp = {
-            .name = fi->getName(),
-            .root = fi == fg->root->getFunction : true ? false,
-            .refs = fi->getNumReferences(),
-          };
-          target = boost::add_vertex(vp, g);
+          VertexProperties vp = {};
+          vp.name = fi->getName();
+          vp.root = fi == fg->root->getFunction() ? true : false;
+          vp.refs = ni->getNumReferences();
+
+          target = boost::add_vertex(vp, *g);
           functions[id] = target;
         }
       }
 
       // Finally add an edge between each caller and callee.
-      boost::add_edge(source, target, g);
+      boost::add_edge(source, target, *g);
     }
   }
 
