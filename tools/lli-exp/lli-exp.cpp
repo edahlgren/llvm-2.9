@@ -20,6 +20,7 @@
 #include "llvm/Support/Signals.h"
 
 #include <cerrno>
+#include <iostream>
 
 #ifdef __CYGWIN__
 #include <cygwin/version.h>
@@ -107,10 +108,10 @@ int main(int argc, char **argv, char * const *envp) {
   if (PrintGraphML) {
     // Print the graph in a GraphML format. This is parseable by
     // many other tools.
-    print_graphml(fg, outs());
+    print_graphml(fg, std::cout);
   } else {
     // Default to a naive, human-readable map.
-    print_graph(fg, std::cout);
+    print_graph(fg, outs());
   }
     
   // Delete the graph when we're done.

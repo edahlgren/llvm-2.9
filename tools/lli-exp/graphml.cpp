@@ -11,6 +11,7 @@
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdint>
 #include <iostream>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphml.hpp>
@@ -60,7 +61,8 @@ Graph *make_boost_graph(FunctionGraph *fg) {
   // Keep a cached of vertices that we've created so that we can add
   // edges to them as we find connections.
   std::unordered_map<uintptr_t, Graph::vertex_descriptor> functions;
-
+  typedef std::unordered_map<std::string,double>::const_iterator functions_iterator;
+  
   // Iterate through all of the functions.
   for (FunctionsMap::iterator i = fg->functions.begin(), e = fg->functions.end(); i != e; ++i) {
     // Get the source function.
@@ -68,7 +70,7 @@ Graph *make_boost_graph(FunctionGraph *fg) {
 
     // Get the ID of te function and check if we've seen it before.
     uintptr_t id = reinterpret_cast<std::uintptr_t>(f);
-    auto cached_source = functions.find(id);
+    functions_iterator cached_source = functions.find(id);
 
     // Get a pointer to the source vertex.
     Graph::vertex_descriptor source;
@@ -105,7 +107,7 @@ Graph *make_boost_graph(FunctionGraph *fg) {
       } else {
         // Same as above, see if it's cached.
         uintptr_t id = reinterpret_cast<std::uintptr_t>(fi);
-        auto cached_target = functions.find(id);
+        functions_iterator cached_target = functions.find(id);
 
         // Get a pointer to the target vertex.
         if (cached_target != functions.end()) {

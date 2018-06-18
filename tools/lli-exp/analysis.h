@@ -13,6 +13,8 @@
 #include "llvm/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <iostream>
+
 // FunctionsMap maps Functions to a wrapper node. The wrapper node links
 // a Function to other functions in a graph.
 typedef std::map<const llvm::Function *, llvm::CallGraphNode *> FunctionsMap;
@@ -72,6 +74,6 @@ void link_function_to_graph(FunctionGraph *fg, llvm::Function *F);
 
 void print_graph(FunctionGraph *fg, llvm::raw_ostream &os);
 
-void print_graphml(FunctionGraph *fg, llvm::raw_ostream &os);
+void print_graphml(FunctionGraph *fg, std::ostream &os);
 
 #endif // end ANALYSIS_H
