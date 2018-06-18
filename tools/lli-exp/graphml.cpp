@@ -34,7 +34,7 @@ struct VertexProperties {
 
 // Define properties for edges.
 struct EdgeProperties {
-  int weight;
+  int order;
 };
 
 // Define the graph.
@@ -99,6 +99,7 @@ Graph *make_boost_graph(FunctionGraph *fg) {
     }
 
     // Iterate through callees (targets).
+    int order = 0;
     for (llvm::CallGraphNode::const_iterator j = node->begin(), e = node->end(); j != e; ++j) {
       // Get a target function.
       llvm::CallGraphNode *ni = j->second;
@@ -137,7 +138,13 @@ Graph *make_boost_graph(FunctionGraph *fg) {
       }
 
       // Finally add an edge between each caller and callee.
-      boost::add_edge(source, target, *g);
+      EdgeProperties ep = {};
+      // FIXME: This isn't the real call order. It's just the order that
+      // the functions were added to the callee list of this function.
+      // We're using it just to start populating the GraphML with values
+      // that *could* be sensible.
+      ep.order = order++;      
+      boost::add_edge(source, target, ep, *g);
     }
   }
 
@@ -151,7 +158,7 @@ void print_graphml(FunctionGraph *fg, std::ostream &os) {
   dp.property("name", get(&VertexProperties::name, *g));
   dp.property("root", get(&VertexProperties::root, *g));
   dp.property("refs", get(&VertexProperties::refs, *g));
-  dp.property("weight", get(&EdgeProperties::weight, *g));
+  dp.property("order", get(&EdgeProperties::order, *g));
 
   boost::write_graphml(os, *g, dp, true);
 
