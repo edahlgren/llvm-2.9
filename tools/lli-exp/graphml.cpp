@@ -35,6 +35,7 @@ struct VertexProperties {
 // Define properties for edges.
 struct EdgeProperties {
   int order;
+  bool unconditional;
 };
 
 // Define the graph.
@@ -137,13 +138,40 @@ Graph *make_boost_graph(FunctionGraph *fg) {
         }
       }
 
-      // Finally add an edge between each caller and callee.
+      // Create the edge metadata.
       EdgeProperties ep = {};
-      // FIXME: This isn't the real call order. It's just the order that
-      // the functions were added to the callee list of this function.
-      // We're using it just to start populating the GraphML with values
-      // that *could* be sensible.
-      ep.order = order++;      
+      
+      // This is the call order according the order of the BasicBlocks
+      // in the source function.
+      //
+      // FIXME: We should probably order calls a bit differently to handle
+      // conditionals.
+      ep.order = order++;
+
+      // This determines whether we can unconditionally get from the
+      // BasicBlock containing the source function to the BasicBlock
+      // containing the target function. If we can't, then we need to mark
+      // this function as such.
+      //
+      // Duds are always unconditionally called because we can't see
+      // inside the source to know any different. This is also the only
+      // case where the Instruction pointer should be null.
+      if (!fi) {
+        ep.unconditional = true;
+      } else {      
+        // Grab the Instruction pointer.
+        llvm::Instruction *inst = j->first;
+        assert(inst && "Instruction is bogus");
+        
+        // Get the basic block containing the target function.
+        llvm::BasicBlock *bb = inst->getParent();
+
+        // Compute whether the basic block can be unconditionally reached
+        // inside of f.
+        ep.unconditional = unconditional_path(f, bb);
+      }
+      
+      // Finally add the edge.
       boost::add_edge(source, target, ep, *g);
     }
   }
@@ -159,6 +187,7 @@ void print_graphml(FunctionGraph *fg, std::ostream &os) {
   dp.property("root", get(&VertexProperties::root, *g));
   dp.property("refs", get(&VertexProperties::refs, *g));
   dp.property("order", get(&EdgeProperties::order, *g));
+  dp.property("unconditional", get(&EdgeProperties::unconditional, *g));
 
   boost::write_graphml(os, *g, dp, true);
 

@@ -70,7 +70,10 @@ public:
   }
 };
 
-void link_function_to_graph(FunctionGraph *fg, llvm::Function *F);
+
+bool unconditional_path(llvm::Function *f, llvm::BasicBlock *target);
+
+void link_function_to_graph(FunctionGraph *fg, llvm::Function *f);
 
 void print_graph(FunctionGraph *fg, llvm::raw_ostream &os);
 

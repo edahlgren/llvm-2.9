@@ -8,12 +8,14 @@
 
 #include "analysis.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Module.h"
 #include "llvm/Instructions.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Support/CallSite.h"
-//#include "llvm/Support/Casting.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -86,6 +88,136 @@ llvm::CallGraphNode *get_or_cast_function(FunctionGraph *fg, const llvm::Functio
   return cgn;
 }
 
+static const char *instruction_type(llvm::BasicBlock::iterator i) {
+  if (llvm::isa<llvm::BranchInst>(i)) {
+    return "branch";
+  }
+  if (llvm::isa<llvm::SwitchInst>(i)) {
+    return "switch";
+  }
+  if (llvm::isa<llvm::CallInst>(i)) {
+    return "call";
+  }
+  if (llvm::isa<llvm::InvokeInst>(i)) {
+    return "invoke";
+  }
+  if (llvm::isa<llvm::ReturnInst>(i)) {
+    return "return";
+  }
+  if (llvm::isa<llvm::UnwindInst>(i)) {
+    return "unwind";
+  }
+  if (llvm::isa<llvm::UnreachableInst>(i)) {
+    return "unreachable";
+  }
+  if (llvm::isa<llvm::AllocaInst>(i)) {
+    return "alloca";
+  }
+  if (llvm::isa<llvm::LoadInst>(i)) {
+    return "load";
+  }
+  if (llvm::isa<llvm::StoreInst>(i)) {
+    return "store";
+  }
+  if (llvm::isa<llvm::GetElementPtrInst>(i)) {
+    return "element-get-ptr";
+  }
+  if (llvm::isa<llvm::ExtractElementInst>(i)) {
+    return "element-extract";
+  }
+  if (llvm::isa<llvm::InsertElementInst>(i)) {
+    return "element-insert";
+  }
+  if (llvm::isa<llvm::ShuffleVectorInst>(i)) {
+    return "shuffle";
+  }
+  if (llvm::isa<llvm::InsertValueInst>(i)) {
+    return "value-insert";
+  }
+  if (llvm::isa<llvm::ExtractValueInst>(i)) {
+    return "value-extract";
+  }
+  if (llvm::isa<llvm::BinaryOperator>(i)) {
+    return "binary";
+  }
+  if (llvm::isa<llvm::CastInst>(i)) {
+    return "cast";
+  }
+  if (llvm::isa<llvm::CmpInst>(i)) {
+    return "cmp";
+  }
+  if (llvm::isa<llvm::IndirectBrInst>(i)) {
+    return "break-indirect";
+  }
+  if (llvm::isa<llvm::PHINode>(i)) {
+    return "phi";
+  }
+  if (llvm::isa<llvm::SelectInst>(i)) {
+    return "select";
+  }
+  return "unknown";
+}
+
+// Check if a branch starting at BasicBlock leads only to target.
+static bool leads_only_to(llvm::BasicBlock *branch, llvm::BasicBlock *target) {
+  // Does the branch already match the target? Then there's
+  // nothing else to do.
+  if (branch == target) {
+    return true;
+  }
+  
+  // Get the terminator instruction for the branch. It could be a branch
+  // or a switch instruction (or maybe even something else) so we use the
+  // more general "successor" interface to operate on the chain of blocks.
+  llvm::TerminatorInst *term = branch->getTerminator();
+  unsigned successors = term->getNumSuccessors();
+  assert(successors > 0);
+
+  // Only one destination? This is true for unconditional branches
+  // and weird switch instructions with only a default block.
+  if (successors == 1) {
+      // Then get the destination and check that it's to the target.
+      llvm::BasicBlock *end = term->getSuccessor(0);
+      // This is another base case.
+      return (end == target);
+  }
+
+  // There are multiple possible destinations, we need to check each.
+  for (unsigned i = 0; i != successors; ++i) {
+    llvm::BasicBlock *succ = term->getSuccessor(i);
+    if (!leads_only_to(succ, target)) {
+      return false;
+    }
+  }
+  
+  // If everything checked out then we can return true;
+  return true;
+}
+
+bool unconditional_path(llvm::Function* f, llvm::BasicBlock *target) {
+  // Iterate through the BasicBlocks that would lead to this target.
+  for (llvm::pred_iterator pi = llvm::pred_begin(target), e = llvm::pred_end(target); pi != e; ++pi) {
+    // Has this predecessor BasicBlock escaped the scope of our function?    
+    llvm::BasicBlock *pred = *pi;
+    if (pred->getParent() != f) {
+      // Then ignore it, we're only concerned with BasicBlocks in this Function.
+      //
+      // CHECKME: Is this really necessary?
+      continue;
+    }
+
+    // Then check that each predecessor leads only to the target. This
+    // is a recursive function that travels all the way down the branches
+    // of pred looking for unconditional terminators.
+    if (!leads_only_to(pred, target)) {
+      return false;
+    }
+  }
+
+  // If all predecessor blocks check out, then we're good.
+  return true;
+}
+
 // ---- Public interface
 
 // link_function_to_graph links f as a node in the FunctionGraph by connecting
@@ -140,9 +272,9 @@ void link_function_to_graph(FunctionGraph *fg, llvm::Function *f) {
   //
   // e.g. f (caller) -> basic block (instructions, e.g. calls)
   //
+  // Search through the function's basic blocks (i.e. guts) looking for calls
+  // to other functions.
   for (llvm::Function::iterator bb = f->begin(), bbe = f->end(); bb != bbe; ++bb) {
-    // Search through the function's basic blocks (i.e. guts) looking for
-    // calls to other functions.
     for (llvm::BasicBlock::iterator ii = bb->begin(), ie = bb->end(); ii != ie; ++ii) {
       // Is this value in the basic block an interesting call site?
       llvm::CallSite cs(llvm::cast<llvm::Value>(ii));

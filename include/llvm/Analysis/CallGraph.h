@@ -178,7 +178,7 @@ class CallGraphNode {
   // CallRecord - This is a pair of the calling instruction (a call or invoke)
   // and the callgraph node being called.
 public:
-  typedef std::pair<WeakVH, CallGraphNode*> CallRecord;
+  typedef std::pair<AssertingVH<Instruction>, CallGraphNode*> CallRecord;
 private:
   std::vector<CallRecord> CalledFunctions;
   
