@@ -8,4 +8,5 @@ add_llvm_tool(lli-exp
   lli-exp.cpp
   analysis.cpp
   graphml.cpp
+  cfg.cpp
 )

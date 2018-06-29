@@ -70,8 +70,11 @@ public:
   }
 };
 
+const char *instruction_type(llvm::BasicBlock::iterator i);
 
 bool unconditional_path(llvm::Function *f, llvm::BasicBlock *target);
+
+void print_function_control_flow(llvm::Function *f, llvm::raw_ostream &os);
 
 void link_function_to_graph(FunctionGraph *fg, llvm::Function *f);
 

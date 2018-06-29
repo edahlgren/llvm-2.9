@@ -88,7 +88,7 @@ llvm::CallGraphNode *get_or_cast_function(FunctionGraph *fg, const llvm::Functio
   return cgn;
 }
 
-static const char *instruction_type(llvm::BasicBlock::iterator i) {
+const char *instruction_type(llvm::BasicBlock::iterator i) {
   if (llvm::isa<llvm::BranchInst>(i)) {
     return "branch";
   }

@@ -36,7 +36,13 @@ namespace {
   InputFile(cl::desc("<input bitcode>"), cl::Positional, cl::init("-"));
 
   cl::opt<bool>
+  PrintDefault("default", cl::desc("Print in default format"), cl::init(true));
+
+  cl::opt<bool>
   PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(false));
+
+  cl::opt<bool>
+  PrintControlFlow("flow", cl::desc("Print the control flow"), cl::init(false));
 }
 
 static void do_shutdown() {
@@ -102,6 +108,9 @@ int main(int argc, char **argv, char * const *envp) {
   // Link the Module's functions into the graph.
   for (Module::iterator i = m->begin(), e = m->end(); i != e; ++i) {
     link_function_to_graph(fg, (Function *)i);
+    if (PrintControlFlow) {
+      print_function_control_flow((Function *)i, outs());
+    }
   }
 
   // Then print what we constructed.
@@ -109,7 +118,7 @@ int main(int argc, char **argv, char * const *envp) {
     // Print the graph in a GraphML format. This is parseable by
     // many other tools.
     print_graphml(fg, std::cout);
-  } else {
+  } else if (PrintDefault) {
     // Default to a naive, human-readable map.
     print_graph(fg, outs());
   }
