@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "analysis.h"
-#include "graph.h"
+#include "write_dot.h"
 
 #include "llvm/Assembly/Writer.h"
 #include "llvm/Support/CFG.h"
