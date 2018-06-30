@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "analysis.h"
+#include "graph.h"
 
 #include "llvm/Assembly/Writer.h"
 #include "llvm/Support/CFG.h"
@@ -81,5 +82,5 @@ struct DOTGraphTraits<Function*> : public DefaultDOTGraphTraits {
 }
 
 void print_function_control_flow(llvm::Function *f, llvm::raw_ostream &os) {  
-  llvm::WriteGraph(os, f);
+  llvm::write_dot_graph(f, os);
 }
