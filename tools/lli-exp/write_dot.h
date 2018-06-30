@@ -242,7 +242,7 @@ static void write_dot_edge(const GraphType &g, raw_ostream &os,
 
 // write_dot_node serializes a node to os using the dot language. 
 template<typename GraphType>
-static void write_dot_node(const GraphType &g, raw_ostream &os,
+static void _write_dot_node(const GraphType &g, raw_ostream &os,
                        DOTGraphTraits<GraphType> dtraits,
                        typename GraphTraits<GraphType>::NodeType *node) {
   // Get an attributes of this node.
@@ -365,6 +365,29 @@ static void write_dot_node(const GraphType &g, raw_ostream &os,
   }
 }
 
+template<typename GraphType>
+static void write_dot_node(const GraphType &g, raw_ostream &os,
+                       DOTGraphTraits<GraphType> dtraits,
+                       typename GraphTraits<GraphType>::NodeType& node) {
+  write_dot_node(g, os, dtraits, &node);
+}
+
+template<typename GraphType>
+static void write_dot_node(const GraphType &g, raw_ostream &os,
+                       DOTGraphTraits<GraphType> dtraits,
+                       typename GraphTraits<GraphType>::NodeType *const *node) {
+  write_dot_node(g, os, dtraits, *node);
+}
+ 
+template<typename GraphType>
+static void write_dot_node(const GraphType &g, raw_ostream &os,
+                       DOTGraphTraits<GraphType> dtraits,
+                       typename GraphTraits<GraphType>::NodeType *node) {
+    if (!dtraits.isNodeHidden(node)) {
+      _write_dot_node(g, os, dtraits, node);
+    }
+}
+
 // write_dot_header writes to the ostream in a format specific to the
 // the dot language.
 //
@@ -409,21 +432,8 @@ static void write_dot_nodes(const GraphType &g, raw_ostream &os,
   typedef typename GraphTraits<GraphType>::nodes_iterator node_iterator;  
   for (node_iterator i = GraphTraits<GraphType>::nodes_begin(g),
          e = GraphTraits<GraphType>::nodes_end(g); i != e; ++i) {
-    // Get a pointer to the node. Note that this is not very flexible,
-    // because some types of nodes may not be pointers at all.
-    //
-    // FIXME: Make a function that takes multiple forms of NodeType
-    // (e.g. NodeType &, NodeType *const, NodeType *) and invokes
-    // the logic below.
-    typename GraphTraits<GraphType>::NodeType *node = i;
-
-    // Is the node hidden according to the DOTGraphTraits? By default
-    // it is not, but DOTGraphTraits can customize g to excluding
-    // information.
-    if (!dtraits.isNodeHidden(node)) {
-      // Serialize this node to os.
-      write_dot_node(g, os, dtraits, node);
-    }
+    // Serialize this node to os.
+    write_dot_node(g, os, dtraits, *i);
   }
 }
 

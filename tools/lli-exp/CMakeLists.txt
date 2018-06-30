@@ -9,4 +9,5 @@ add_llvm_tool(lli-exp
   analysis.cpp
   graphml.cpp
   cfg.cpp
+  dominator.cpp
 )

@@ -42,7 +42,10 @@ namespace {
   PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(false));
 
   cl::opt<bool>
-  PrintControlFlow("flow", cl::desc("Print the control flow"), cl::init(false));
+  PrintControlFlow("flow", cl::desc("Print the control flow graph of each function"), cl::init(false));
+
+  cl::opt<bool>
+  PrintDominance("dom", cl::desc("Print the dominance tree of each function"), cl::init(false));
 }
 
 static void do_shutdown() {
@@ -110,6 +113,9 @@ int main(int argc, char **argv, char * const *envp) {
     link_function_to_graph(fg, (Function *)i);
     if (PrintControlFlow) {
       print_function_control_flow((Function *)i, outs());
+    }
+    if (PrintDominance) {
+      print_dominator_tree((Function *)i, outs());
     }
   }
 
