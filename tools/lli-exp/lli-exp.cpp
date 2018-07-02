@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "analysis.h"
+#include "trace.h"
 
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
@@ -15,6 +16,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/IRReader.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Signals.h"
@@ -48,13 +50,6 @@ namespace {
   PrintDominance("dom", cl::desc("Print the dominance tree of each function"), cl::init(false));
 }
 
-static void do_shutdown() {
-  // Cygwin-1.5 invokes DLL's dtors before atexit handler.
-#ifndef DO_NOTHING_ATEXIT
-  llvm_shutdown();
-#endif
-}
-
 static LLVMContext &context() {
   return getGlobalContext();
 }
@@ -83,15 +78,33 @@ static Module *load_module(LLVMContext &ctx, std::string filename) {
   return m;
 }
 
+static void write_stacktrace_on_crash() {
+  // See trace.h and trace.cpp.
+  sys::AddSignalHandler(write_stacktrace, 0);
+}
+
 //===----------------------------------------------------------------------===//
 // main
 //
 int main(int argc, char **argv, char * const *envp) {
+  // Write a stacktrace to stderr if an assertion fails, if
+  // we generate a segmentation fault, or for any other signal
+  // related death. This is really helpful for debugging.
+  //
+  // Note that there is another function similar to this one
+  // called sys::PrintStackTraceOnErrorSignal but we're not
+  // using it for several reasons:
+  //
+  // 1. Enabling it (e.g. HAVE_BACKTRACE) is a royal pain in the ass.
+  // 2. We want to go beyond it's semantics and also contextualize
+  //    the file and line numbers of each entry.
+  write_stacktrace_on_crash();
+
   // Get the llvm context.
   LLVMContext &ctx = context();
 
-  // Call llvm_shutdown() on exit.
-  atexit(do_shutdown);
+  // Call llvm_shutdown on exit.
+  atexit(llvm_shutdown);
 
   // Parse the input filename from the commandline arguments.
   std::string filename = parse_args(argc, argv);  

@@ -398,9 +398,16 @@ static void write_dot_node(const GraphType &g, raw_ostream &os,
 //    DOTGraphTraits.renderGraphFromBottomUp.
 // 3. Any graph properties, from DOTGraphTraits.getGraphProperties.
 template<typename GraphType>
-static void write_dot_header(const GraphType &g, raw_ostream &os, DOTGraphTraits<GraphType> dtraits) {
+static void write_dot_header(const GraphType &g, raw_ostream &os, DOTGraphTraits<GraphType> dtraits, const std::string &alt_title) {
+  // Select a graph name.
+  std::string graph_name = "";
+  if (!alt_title.empty()) {
+    graph_name = alt_title;
+  } else {
+    graph_name = dtraits.getGraphName(g);
+  }
+
   // Write the graph name.
-  std::string graph_name = dtraits.getGraphName(g);
   if (!graph_name.empty())
     os << "digraph \"" << escape_string(graph_name) << "\" {\n";
   else
@@ -427,7 +434,7 @@ static void write_dot_header(const GraphType &g, raw_ostream &os, DOTGraphTraits
 // each one that is not hidden.
 template<typename GraphType>
 static void write_dot_nodes(const GraphType &g, raw_ostream &os,
-                        DOTGraphTraits<GraphType> dtraits) {
+                            DOTGraphTraits<GraphType> dtraits) {
   // Iterate through all nodes, as they are ordered in the GraphTraits.
   typedef typename GraphTraits<GraphType>::nodes_iterator node_iterator;  
   for (node_iterator i = GraphTraits<GraphType>::nodes_begin(g),
@@ -448,12 +455,13 @@ static void write_dot_footer(raw_ostream &os) {
 // uses DOTGraphTraits<GraphType> for the graph name. To understand how
 // the generic GraphType works, see the file comment above.
 template<typename GraphType>
-void write_dot_graph(const GraphType &g, raw_ostream &os) {
+void write_dot_graph(const GraphType &g, raw_ostream &os,
+                     const std::string alt_title = "") {
   // Initialize behavior specific to dot graphs.
   DOTGraphTraits<GraphType> dtraits(false);
 
   // Write a header.
-  write_dot_header(g, os, dtraits);
+  write_dot_header(g, os, dtraits, alt_title);
 
   // Serialize each of the nodes and edges.
   write_dot_nodes(g, os, dtraits);
