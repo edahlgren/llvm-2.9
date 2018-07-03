@@ -38,10 +38,7 @@ namespace {
   InputFile(cl::desc("<input bitcode>"), cl::Positional, cl::init("-"));
 
   cl::opt<bool>
-  PrintDefault("default", cl::desc("Print in default format"), cl::init(true));
-
-  cl::opt<bool>
-  PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(false));
+  PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(true));
 
   cl::opt<bool>
   PrintControlFlow("flow", cl::desc("Print the control flow graph of each function"), cl::init(false));
@@ -132,14 +129,10 @@ int main(int argc, char **argv, char * const *envp) {
     }
   }
 
-  // Then print what we constructed.
   if (PrintGraphML) {
     // Print the graph in a GraphML format. This is parseable by
     // many other tools.
     print_graphml(fg, std::cout);
-  } else if (PrintDefault) {
-    // Default to a naive, human-readable map.
-    print_graph(fg, outs());
   }
     
   // Delete the graph when we're done.

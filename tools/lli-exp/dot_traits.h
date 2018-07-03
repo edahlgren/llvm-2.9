@@ -77,13 +77,13 @@ struct DOTGraphTraits<Function*> : public DefaultDOTGraphTraits {
 };
 
 template<>
-struct DOTGraphTraits<DomTreeNode*> : public DefaultDOTGraphTraits {
+struct DOTGraphTraits<DominanceNode*> : public DefaultDOTGraphTraits {
 
   DOTGraphTraits (bool isSimple=false)
     : DefaultDOTGraphTraits(isSimple) {}
 
-  std::string getNodeLabel(DomTreeNode *Node, DomTreeNode *Graph) {
-    BasicBlock *BB = Node->getBlock();
+  std::string getNodeLabel(DominanceNode *Node, DominanceNode *Graph) {
+    BasicBlock *BB = Node->block;
 
     if (!BB)
       return "Post dominance root node";
@@ -94,17 +94,17 @@ struct DOTGraphTraits<DomTreeNode*> : public DefaultDOTGraphTraits {
 };
 
 template<>
-struct DOTGraphTraits<DominatorTree*> : public DOTGraphTraits<DomTreeNode*> {
+struct DOTGraphTraits<DominanceGraph*> : public DOTGraphTraits<DomTreeNode*> {
   
   DOTGraphTraits (bool isSimple=false)
-    : DOTGraphTraits<DomTreeNode*>(isSimple) {}
+    : DOTGraphTraits<DominanceNode*>(isSimple) {}
 
-  static std::string getGraphName(DominatorTree *DT) {
+  static std::string getGraphName(DominanceGraph *Graph) {
     return "Dominator tree";
   }
 
-  std::string getNodeLabel(DomTreeNode *Node, DominatorTree *G) {
-    return DOTGraphTraits<DomTreeNode*>::getNodeLabel(Node, G->getRootNode());
+  std::string getNodeLabel(DominanceNode *Node, DominanceGraph *Graph) {
+    return DOTGraphTraits<DominanceNode*>::getNodeLabel(Node, Graph->root_node);
   }
 };
 } // End llvm namespace.
