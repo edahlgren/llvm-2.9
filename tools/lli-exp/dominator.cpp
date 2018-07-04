@@ -18,34 +18,29 @@ void print_dominator_tree(llvm::Function *f, llvm::raw_ostream &os) {
   // graph name is not as meaningful by default, see dot_traits.h.
   std::string title = "Dominator tree for " + f->getName().str();
 
-  // The DominatorTree constructor takes for granted that it's
-  // called from the FPassManager::runOnFunction, which short-circuits
-  // if Function->isDeclaration returns true. If we don't do this,
-  // then the DominatorTree constructor will attempt to always get
-  // the head of the Function's BasicBlocks list, which will be empty
-  // if the Function is a declared but not defined.
+  // The DominanceGraph constructor requires a root BasicBlock so we
+  // can't build a DominanceGraph from a Function that lacks BasicBlocks.
+  //
+  // Since declared but not defined Functions lack BasicBlocks, handle
+  // them specially.
   if (f->isDeclaration()) {
-    // So to work around the bad code design (that is, DominatorTree
-    // is not free from its calling context), write an empty digraph for
-    // empty functions to represent that they exist but we cannot compute
-    // their DominatorTree. We do this for the control flow graph without
-    // any problems because we always use the Function's iterators and
-    // never absolute indexing functions like front/back. So use the
-    // GraphTraits specialization for Function to write the empty graph.
+    // Since we know nothing about f, write an empty digraph. Use the
+    // GraphTraits specialization for the control flow graph to do this,
+    // which can handle empty Functions.
+    //
+    // But make sure to use the title above, or else this will be labeled
+    // as a CFG instead of a Dominator tree.
     llvm::write_dot_graph(f, os, title);
     return;
   }
 
-  // Initialize an empty dominator tree.
-  llvm::DominatorTree *d = new llvm::DominatorTree();
+  // Build the DominatorTree once we know we can find a well-formed entry
+  // BasicBlock to the Function. This BasicBlock will be the root of the graph.
+  DominanceGraph *dg = new DominanceGraph(f->front());
 
-  // Build the DominatorTree once we know that there are BasicBlocks to
-  // iterate over.
-  d->runOnFunction(*f);
-
-  // Serialize the DominatorTree to os using our custom title.
-  llvm::write_dot_graph(d, os, title);
+  // Serialize the graph to os using our custom title.
+  llvm::write_dot_graph(dg, os, title);
 
   // Don't forget to cleanup.
-  delete d;
+  delete dg;
 }

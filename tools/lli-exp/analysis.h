@@ -177,29 +177,78 @@ struct DominanceInfoRec {
   // (none)
 };
 
+// This graph expresses the "dominance" tree of BasicBlocks starting at
+// a single entry point (e.g. a Function).
+//
+// Calculating this graph is useful because it tells us which BasicBlocks
+// are necessarily executed before others. This helps us identify loop
+// structure and eliminate common expressions across the whole program.
+//
+// We only support calculating "pre-dominance", that is, what BasicBlock
+// must precede another BasicBlocks. There is also "post-dominance" but
+// that isn't supported yet, partly because it's not as helpful and also
+// to make the logic simpler.
+//
+// Not thread-safe.
 class DominanceGraph {
 public:
   // 1. State.
+
+  // This is the BasicBlock that has no dominating BasicBlock. By default,
+  // the entry block of a Function is the root of the DominanceGraph for that
+  // Function.
+  //
+  // Note that this does not support post-dominator graphs, because in that
+  // case there can be multiple roots.
+  DominatorNode *root_node;
+
+  // These are the edges of the graph: a block points to a single immediately
+  // dominating node, which contains a pointer the dominating block. The
+  // graph can be traversed upwards like this (towards the root) because
+  // it contains pre-dominance relationships.
   typedef llvm::DenseMap<llvm::BasicBlock *, DominanceNode *> node_map_type;
   node_map_type nodes;
 
-  DominatorNode *root_node;
-  std::vector<llvm::BasicBlock *> roots;
-  const bool is_post;
+  // All of this state is temporary. We build it while initializing the graph
+  // to construct the nodes above. It is completely cleared at the end of
+  // initialization and/or rebuilding of the graph.
 
-  bool dfs_info_valid;
-  unsigned int slow_queries;
-
-  llvm::DenseMap<llvm::BasicBlock *, llvm::BasicBlock *> idoms;
+  // This maps the depth-first search order of a BasicBlock in a control flow
+  // graph to that BasicBlock.
   std::vector<llvm::BasicBlock *> vertex;
+
+  // This maps BasicBlocks to its intermediate metadata:
+  //
+  //   - dfs number from the callgraph (see vertex above)
+  //   - label ... ???
+  //   - parent block
+  //   - minimum semidominating block's dfs number
   llvm::DenseMap<llvm::BasicBlock *, DominanceInfoRec> info;
 
+  // This maps BasicBlocks to their immediately dominating BasicBlock.
+  llvm::DenseMap<llvm::BasicBlock *, llvm::BasicBlock *> idoms;
+
+  // This state controls optimizations on the graph.
+
+  // Do the nodes in the map above have valid depth-first search numbers
+  // assigned to them?
+  bool dfs_info_valid;
+
+  // This is an arbitrary threshold for updating the depth-first search numbers.
+  // Basically we don't want to update them too often because it means walking
+  // the entire graph, but if we reach this threshold, we should update them
+  // because they make common traversals of the graph much faster.
+  unsigned int slow_queries;
+
   // 2. Construction.
-  DominanceGraph(bool post)
-    : is_post(post), dfs_info_valid(false), slow_queries(0) {}
+  DominanceGraph(llvm::BasicBlock *root)
+    : dfs_info_valid(false), slow_queries(0) {
+    dominance_rebuild(this, root);
+  }
 
   // 3. Deconstruction.
   ~DominatorTreeBase() {
+    // Blow everything away.
     reset();
   }
 
@@ -207,75 +256,55 @@ public:
   // (none)
 
   // 5. Utility methods (minimal).
+
+  // Initialize the graph so that nodes are BasicBlocks, starting at root,
+  // and edges point from a BasicBlock to another BasicBlock that immediately
+  // dominates it.
+  //
+  // This method is only safe to call in the constructor or after a reset.
+  //
+  // Preconditions:
+  //   root must be non-NULL.
+  //
+  // Based on:
+  //   A Fast Algorithm for Finding Dominators in a Flowgraph
+  //   T. Lengauer & R. Tarjan, ACM TOPLAS July 1979, pgs 121-141.
+  void init(llvm::BasicBlock *root);
+
+  // This clears the memory held by the graph. Once it is called, the graph
+  // should either be immediately re-initialized or be destroyed.
   void reset() {
+    // For each of the nodes, destroy its unique dominating node.
     for (typename node_map_type::iterator i = nodes.begin(), e = nodes.end();
          i != e; ++i) {
+      // Could this ever result in a double free if multiple nodes are
+      // immediately dominated by the same node?
       delete i->second;
-    }    
+    }
+    // Free the map. This doesn't free BasicBlocks held by the map,
+    // as we don't own those.
     nodes.clear();
 
+    // Clear out any temporary storage. This should already be cleared
+    // after we rebuilding the graph, but it's better to be safe than sorry.
     idoms.clear();
-    roots.clear();
+    info.clear();
     vertex.clear();
 
+    // Allow the root's destructor to be called. The iteration above over the
+    // nodes list should already have deleted the root dominator node because
+    // at least one node is dominated by it.
     root = 0;
   }
 
-  inline llvm::BasicBlock *get_idom(llvm::BasicBlock *bb) const {
-    typename llvm::DenseMap<llvm::BasicBlock*, llvm::BasicBlock*>::const_iterator i =
-      idoms.find(bb);
-    return i != idoms.end() ? i->second : 0;
-  }
+  // Same as init but clear the state of the graph first. This is safe to
+  // call at any time whereas init is not.
+  void rebuild_graph(llvm::BasicBlock *new_root);
 
-  DominanceNode *get_node_for_block(llvm::BasicBlock *block) {
-    typename node_map_type::iterator i = nodes.find(block);
-    if (i != nodes.end() && i->second)
-      return i->second;
-
-    // Haven't calculated this node yet?  Get or calculate the node for the
-    // immediate dominator.
-    llvm::BasicBlock *idom = get_idom(block);
-    assert(idom || nodes[NULL]);   
-    DominanceNode *idom_node = get_node_for_block(idom);
-    
-    // Add a new tree node for this BasicBlock, and link it as a child of
-    // IDomNode
-    DominanceNode *child = new DominanceNode(block, idom_node);
-    return nodes[block] = idom_node->add_child(child);
-  }
-
-  void update_dfs_numbers() {
-    DominanceNode *r = root_node;
-    if (!r) {
-      return;
-    }
-
-    unsigned dfs_num = 0;   
-    llvm::SmallVector<std::pair<DominanceNode*,
-                                typename DominanceNode::iterator>, 32> workstack;
-
-    workstack.push_back(std::make_pair(r, r->begin()));
-    r->dfs_num_in = dfs_num++;
-
-    while (!workstack.empty()) {
-      DominanceNode *node = workstack.back().first;
-      typename DominanceNode::iterator it = workstack.back().second;
-
-      if (it == node->end()) {
-        node->dfs_num_out = dfs_num++;
-        workstack.pop_back();
-      } else {
-        DominanceNode *child = *it;
-        ++workstack.back().second;
-
-        workstack.push_back(std::make_pair(child, child->begin()));
-        child->dfs_num_in = dfs_num++;
-      }
-    }
-
-    slow_queries = 0;
-    dfs_info_valid = true;
-  }
+  // Iterate through the nodes in the graph and assign numbers to the nodes
+  // in depth-first search order. Calling it is optional but it makes some
+  // operations faster.
+  void rebuild_numbers();
 }
 
 #endif // end ANALYSIS_H
