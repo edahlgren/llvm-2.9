@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "analysis.h"
+#include "cfg.h"
 #include "trace.h"
+#include "write.h"
 
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
@@ -122,17 +123,17 @@ int main(int argc, char **argv, char * const *envp) {
   for (Module::iterator i = m->begin(), e = m->end(); i != e; ++i) {
     link_function_to_graph(fg, (Function *)i);
     if (PrintControlFlow) {
-      print_function_control_flow((Function *)i, outs());
+      write_function_control_flow((Function *)i, outs());
     }
     if (PrintDominance) {
-      print_dominator_tree((Function *)i, outs());
+      write_function_dominator_tree((Function *)i, outs());
     }
   }
 
   if (PrintGraphML) {
     // Print the graph in a GraphML format. This is parseable by
     // many other tools.
-    print_graphml(fg, std::cout);
+    write_function_graph(fg, std::cout);
   }
     
   // Delete the graph when we're done.

@@ -7,8 +7,9 @@ set(LLVM_LINK_COMPONENTS ipa mcjit jit interpreter nativecodegen bitreader asmpa
 add_llvm_tool(lli-exp
   lli-exp.cpp
   analysis.cpp
-  trace.cpp
   cfg.cpp
   dominator.cpp
   graphml.cpp
+  trace.cpp
+  write.cpp
 )

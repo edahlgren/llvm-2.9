@@ -6,6 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef DOT_TRAITS_H
+#define DOT_TRAITS_H
+
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Assembly/Writer.h"
 #include "llvm/Support/CFG.h"
@@ -108,3 +111,5 @@ struct DOTGraphTraits<DominanceGraph *> : public DOTGraphTraits<DominanceNode *>
   }
 };
 } // End llvm namespace.
+
+#endif // end DOT_TRAITS_H

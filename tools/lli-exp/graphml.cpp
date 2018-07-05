@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "analysis.h"
+#include "cfg.h"
+#include "graphml.h"
 
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Support/raw_ostream.h"
@@ -25,52 +26,13 @@ boost::throw_exception(std::exception const& ex)
 }
 #endif
 
-// Define properties for vertices.
-struct VertexProperties {
-  std::string name;
-  bool root;
-  unsigned int refs;
-};
-
-// Define properties for edges.
-struct EdgeProperties {
-  int order;
-  bool unconditional;
-};
-
-// Define the graph.
-typedef boost::adjacency_list<
-  // The kind of container will be used to represent the vertex set, here
-  // vecS maps to std::vector.
-  //
-  // I'm not sure whether this matters when used just to emit GraphML. In
-  // the future it may be interesting to dig into setS versus listS, etc.
-  boost::vecS,
-  // The kind of container will be used to store the out-edges (and possibly
-  // in-edges) for each vertex in the graph. Also maps to std::vector.
-  //
-  // Otherwise same as above.
-  boost::vecS,
-  // Selecting directedS or bidirectionalS choose a directed graph, whereas
-  // undirectedS selects the representation for an undirected graph.
-  boost::directedS,
-  // This is the set of properties attached to each vertex.
-  VertexProperties,
-  // This is the set of properties attached to each edge.
-  EdgeProperties
-  > Graph;
-
-// Define iterators over vertices and edges.
-typedef boost::graph_traits<Graph>::vertex_iterator v_iterator;
-typedef boost::graph_traits<Graph>::edge_iterator e_iterator;
-
-Graph *make_boost_graph(FunctionGraph *fg) {
+GraphML *make_function_graphml(FunctionGraph *fg) {
   // Create the graph.
-  Graph *g = new Graph();
+  GraphML *g = new GraphML();
 
   // Keep a cached of vertices that we've created so that we can add
   // edges to them as we find connections.
-  std::unordered_map<uintptr_t, Graph::vertex_descriptor> functions;
+  std::unordered_map<uintptr_t, GraphML::vertex_descriptor> functions;
   //typedef std::unordered_map<std::string,double>::const_iterator functions_iterator;
   
   // Iterate through all of the functions.
@@ -84,7 +46,7 @@ Graph *make_boost_graph(FunctionGraph *fg) {
     auto cached_source = functions.find(id);
 
     // Get a pointer to the source vertex.
-    Graph::vertex_descriptor source;
+    GraphML::vertex_descriptor source;
     if (cached_source != functions.end()) {
       // Grab the vertex out of the cache.
       source = cached_source->second;
@@ -107,7 +69,7 @@ Graph *make_boost_graph(FunctionGraph *fg) {
       llvm::Function *fi = ni->getFunction();
 
       // Get a pointer to the target.
-      Graph::vertex_descriptor target;
+      GraphML::vertex_descriptor target;
       if (!fi) {
         // This a dud. We don't know where it points to because it's likely outside
         // of this module. We'll use a placeholder vertex with a ?? name.
@@ -179,17 +141,10 @@ Graph *make_boost_graph(FunctionGraph *fg) {
   return g;
 }
 
-void print_graphml(FunctionGraph *fg, std::ostream &os) {
-  Graph *g = make_boost_graph(fg);
-
-  boost::dynamic_properties dp;
-  dp.property("name", get(&VertexProperties::name, *g));
-  dp.property("root", get(&VertexProperties::root, *g));
-  dp.property("refs", get(&VertexProperties::refs, *g));
-  dp.property("order", get(&EdgeProperties::order, *g));
-  dp.property("unconditional", get(&EdgeProperties::unconditional, *g));
-
-  boost::write_graphml(os, *g, dp, true);
-
-  delete g;
+void function_graphml_dynamic_properties(GraphML *g, boost::dynamic_properties *dp) {
+  dp->property("name", get(&VertexProperties::name, *g));
+  dp->property("root", get(&VertexProperties::root, *g));
+  dp->property("refs", get(&VertexProperties::refs, *g));
+  dp->property("order", get(&EdgeProperties::order, *g));
+  dp->property("unconditional", get(&EdgeProperties::unconditional, *g));
 }

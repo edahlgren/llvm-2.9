@@ -6,6 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef TRAITS_H
+#define TRAITS_H
+
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/GraphTraits.h"
 
@@ -49,3 +52,5 @@ struct GraphTraits<DominanceGraph *> : public GraphTraits<DominanceNode *> {
     return df_end(getEntryNode(g));
   }
 };
+
+#endif // end TRAITS_H
