@@ -6,6 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef DOMINATOR_H
+#define DOMINATOR_H
+
+#include "llvm/BasicBlock.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/GraphTraits.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/Dominators.h"
+#include "llvm/Support/DOTGraphTraits.h"
+
 // This is a vertex in a DominanceGraph (see below). It wraps a BasicBlock
 // and points to its immediate dominator and any other BasicBlocks that it
 // dominates.
@@ -56,8 +66,8 @@ public:
     assert(idom && "No immediate dominator?");
     
     if (idom != new_idom) {
-      typename std::vector<llvm::BasicBlock *>::iterator i =
-                  std::find(idom->children.begin(), idom->children.end(), this);
+      iterator i =
+        std::find(idom->children.begin(), idom->children.end(), this);
       assert(i != idom->children.end() &&
              "Not in immediate dominator children set!");
       // I am no longer your child...
@@ -76,9 +86,9 @@ public:
   }
 
   // Returns true if other matches this node.
-  bool matches(DominanceNode *other) {
+  bool compare(DominanceNode *other) {
     if (children.size() != other->children.size())
-      return false;
+      return true;
 
     llvm::SmallPtrSet<llvm::BasicBlock *, 4> other_children;
     for (iterator i = other->begin(), e = other->end(); i != e; ++i) {
@@ -89,15 +99,15 @@ public:
     for (iterator i = begin(), e = end(); i != e; ++i) {
       llvm::BasicBlock *n = (*i)->block;
       if (other_children.count(n) == 0)
-        return false;
+        return true;
     }
-    return true;
+    return false;
   }
 
   // Returns true if this node is dominated by other. It is only
   // safe to call this method if the depth-first search numbers
   // of this node are valid.
-  bool dominated_by(DominanceNode *other) {
+  bool dominated_by(const DominanceNode *other) const {
     assert(dfs_num_in > 0 && dfs_num_out > 0 && "Invalid dfs numbers?");
     return dfs_num_in >= other->dfs_num_in &&
       dfs_num_out <= other->dfs_num_out;
@@ -157,7 +167,7 @@ public:
   //
   // Note that this does not support post-dominator graphs, because in that
   // case there can be multiple roots.
-  DominatorNode *root_node;
+  DominanceNode *root_node;
 
   // These are the edges of the graph: a block points to a single immediately
   // dominating node, which contains a pointer the dominating block. The
@@ -197,16 +207,16 @@ public:
 
   // This is the threshold for updating the depth-first search numbers. See the
   // default below.
-  unsigned int slow_query_threshold;
+  unsigned int slow_threshold;
 
   // 2. Construction.
   DominanceGraph(llvm::BasicBlock *root, unsigned int threshold = 32)
-    : dfs_info_valid(false), slow_queries(0), slow_queries_threshold(threshold) {
-    dominance_rebuild(this, root);
+    : dfs_info_valid(false), slow_queries(0), slow_threshold(threshold) {
+    init(root);
   }
 
   // 3. Deconstruction.
-  ~DominatorTreeBase() {
+  ~DominanceGraph() {
     // Blow everything away.
     reset();
   }
@@ -253,8 +263,11 @@ public:
     // Allow the root's destructor to be called. The iteration above over the
     // nodes list should already have deleted the root dominator node because
     // at least one node is dominated by it.
-    root = 0;
+    root_node = 0;
   }
+
+  llvm::BasicBlock *get_idom(llvm::BasicBlock *bb) const;
+  DominanceNode *get_node(llvm::BasicBlock *bb) const;
 
   // Same as init but clear the state of the graph first. This is safe to
   // call at any time whereas init is not.
@@ -264,13 +277,103 @@ public:
   // in depth-first search order. Calling it is optional but it makes some
   // operations faster.
   void rebuild_dfs_numbers();
-}
+};
+
+namespace llvm {
+template <>
+struct GraphTraits<DominanceNode *> {
+  typedef DominanceNode NodeType;
+  typedef NodeType::iterator  ChildIteratorType;
+
+  static NodeType *getEntryNode(NodeType *N) {
+    return N;
+  }
+  static inline ChildIteratorType child_begin(NodeType *N) {
+    return N->begin();
+  }
+  static inline ChildIteratorType child_end(NodeType *N) {
+    return N->end();
+  }
+
+  typedef df_iterator<DominanceNode *> nodes_iterator;
+
+  static nodes_iterator nodes_begin(DominanceNode *node) {
+    return df_begin(getEntryNode(node));
+  }
+
+  static nodes_iterator nodes_end(DominanceNode *node) {
+    return df_end(getEntryNode(node));
+  }
+};
+
+template <>
+struct GraphTraits<DominanceGraph *> {
+  typedef DominanceNode NodeType;
+  typedef NodeType::iterator  ChildIteratorType;
+
+  static NodeType *getEntryNode(DominanceGraph *g) {
+    return g->root_node;
+  }
+
+  static inline ChildIteratorType child_begin(DominanceNode *node) {
+    return node->begin();
+  }
+
+  static inline ChildIteratorType child_end(DominanceNode *node) {
+    return node->end();
+  }
+
+  typedef df_iterator<DominanceNode*> nodes_iterator;
+
+  static nodes_iterator nodes_begin(DominanceGraph *g) {
+    return df_begin(g->root_node);
+  }
+
+  static nodes_iterator nodes_end(DominanceGraph *g) {
+    return df_end(g->root_node);
+  }
+};
+
+template<>
+struct DOTGraphTraits<DominanceNode *> : public DefaultDOTGraphTraits {
+
+  DOTGraphTraits (bool isSimple=false)
+    : DefaultDOTGraphTraits(isSimple) {}
+
+  std::string getNodeLabel(DominanceNode *node, DominanceNode *g) {
+    BasicBlock *bb = node->block;
+
+    if (!bb)
+      return "Post dominance root node";
+
+    DOTGraphTraits<Function *> dtraits(isSimple());
+    return dtraits.getNodeLabel(bb, bb->getParent());
+  }
+};
+
+template<>
+struct DOTGraphTraits<DominanceGraph *> : public DOTGraphTraits<DominanceNode *> {
+  
+  DOTGraphTraits (bool isSimple=false)
+    : DOTGraphTraits<DominanceNode *>(isSimple) {}
+
+  static std::string getGraphName(DominanceGraph *g) {
+    return "Dominator tree";
+  }
+
+  std::string getNodeLabel(DominanceNode *node, DominanceGraph *g) {
+    return DOTGraphTraits<DominanceNode *>::getNodeLabel(node, g->root_node);
+  }
+};
+} // end llvm namespace.
 
 bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
                         const llvm::BasicBlock *b);
 
 bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
-               const llvm::BasicBlock *b, bool strict = false);
+               const llvm::BasicBlock *b);
 
 llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock *a,
-                                           llvm::BasicBlock *b, bool strict = false);
+                                           llvm::BasicBlock *b);
+
+#endif // end DOMINATOR_H

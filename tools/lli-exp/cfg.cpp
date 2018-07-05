@@ -7,10 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "analysis.h"
+#include "cfg.h"
 #include "write_dot.h"
-#include "dot_traits.h"
 
 #include "llvm/Module.h"
+#include "llvm/IntrinsicInst.h"
 #include "llvm/Support/raw_ostream.h"
 
 // get_or_cast_function finds a f in the FunctionGraph, returning its CallGraphNode

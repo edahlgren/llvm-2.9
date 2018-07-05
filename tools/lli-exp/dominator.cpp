@@ -6,38 +6,33 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef DOMINATOR_H
-#define DOMINATOR_H
-
 #include "dominator.h"
-
-#include "llvm/Analysis/Dominators.h"
 
 // Iterate through the children of bb and assign all blocks a number
 // in depth-first search order. This makes more sense as a recursive
 // algorithm but that might blow the stack, so we use a more obtuse,
 // iterative one.
-static unsigned build_dominance_info_records(DominanceGraph &dg, llvm::BasicBlock *bb, unsigned n) {
+static unsigned build_dominance_info_records(DominanceGraph *dg, llvm::BasicBlock *bb, unsigned n) {
   llvm::SmallVector<std::pair<llvm::BasicBlock *,
-                              llvm::BasicBlock::ChildIteratorType>, 32> worklist;
+                              llvm::succ_iterator>, 32> worklist;
 
-  worklist.push_back(std::make_pair(bb, llvm::BasicBlock::child_begin(bb)));
+  worklist.push_back(std::make_pair(bb, llvm::succ_begin(bb)));
 
   while (!worklist.empty()) {
     llvm::BasicBlock *bb = worklist.back().first;
-    llvm::BasicBlock::ChildIteratorType next_succ = worklist.back().second;
+    llvm::succ_iterator next_succ = worklist.back().second;
 
-    DominanceInfoRec &bbinfo = dg.info[bb];
+    DominanceInfoRec &bbinfo = dg->info[bb];
 
-    if (next_succ == llvm::BasicBlock::child_begin(bb)) {
+    if (next_succ == llvm::succ_begin(bb)) {
       bbinfo.dfsnum = bbinfo.semi = ++n;
       bbinfo.label = bb;
-      dg.vertex.push_back(bb);
+      dg->vertex.push_back(bb);
     }
 
-    unsigned bb_dfs_num = bbinfo.dfs_num;
+    unsigned bb_dfs_num = bbinfo.dfsnum;
 
-    if (next_succ == llvm::BasicBlock::child_end(bb)) {
+    if (next_succ == llvm::succ_end(bb)) {
       worklist.pop_back();
       continue;
     }
@@ -45,10 +40,10 @@ static unsigned build_dominance_info_records(DominanceGraph &dg, llvm::BasicBloc
     ++worklist.back().second;
 
     llvm::BasicBlock *succ = *next_succ;
-    DominanceInfoRec &succ_vinfo = dg.info[succ];
+    DominanceInfoRec &succ_vinfo = dg->info[succ];
     if (succ_vinfo.semi == 0) {
       succ_vinfo.parent = bb_dfs_num;
-      worklist.push_back(std::make_pair(succ, llvm::BasicBlock::child_begin(succ)));
+      worklist.push_back(std::make_pair(succ, llvm::succ_begin(succ)));
     }
   }
 
@@ -60,11 +55,11 @@ static unsigned build_dominance_info_records(DominanceGraph &dg, llvm::BasicBloc
 //
 // But if bb hasn't been processed at all, then we "skip" it by just
 // returning bb itself.
-static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph &dg, llvm::BasicBlock *bb,
+static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph *dg, llvm::BasicBlock *bb,
                                                    unsigned last_linked) {
-  DominanceInfoRec &bbinfo = dg.info[bb];
+  DominanceInfoRec &bbinfo = dg->info[bb];
 
-  if (bbinfo.dfs_num < last_linked) {
+  if (bbinfo.dfsnum < last_linked) {
     return bb;
   }
 
@@ -77,8 +72,8 @@ static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph &dg, llvm::Bas
 
   while (!work.empty()) {
     llvm::BasicBlock *v = work.back();
-    DominanceInfoRec &v_info = dg.info[v];
-    llvm::BasicBlock *v_parent = dg.vertex[v_info.parent];
+    DominanceInfoRec &v_info = dg->info[v];
+    llvm::BasicBlock *v_parent = dg->vertex[v_info.parent];
 
     if (visited.insert(v_parent) && v_info.parent >= last_linked) {
       work.push_back(v_parent);
@@ -91,11 +86,11 @@ static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph &dg, llvm::Bas
       continue;
     }
 
-    DominanceInfoRec &v_parent_info = dg.info[v_parent];
+    DominanceInfoRec &v_parent_info = dg->info[v_parent];
     llvm::BasicBlock *v_parent_label = v_parent_info.label;
     llvm::BasicBlock *v_label = v_info.label;
 
-    if (dg.info[v_parent_label].semi < dg.info[v_label].semi) {
+    if (dg->info[v_parent_label].semi < dg->info[v_label].semi) {
       v_info.label = v_parent_label;
     }
     
@@ -108,33 +103,33 @@ static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph &dg, llvm::Bas
 // Get the immediate dominator of this block. This should only be called
 // during dominance_build, otherwise idoms will be empty. There are other
 // methods to get the immediate dominator from the nodes we built.
-inline llvm::BasicBlock *DominanceGraph::get_idom(llvm::BasicBlock *bb) const {
+llvm::BasicBlock *DominanceGraph::get_idom(llvm::BasicBlock *bb) const {
   typename llvm::DenseMap<llvm::BasicBlock*, llvm::BasicBlock*>::const_iterator i =
-    this.idoms.find(bb);
-  return i != this.idoms.end() ? i->second : 0;
+    this->idoms.find(bb);
+  return i != this->idoms.end() ? i->second : 0;
 }
 
-inline DominanceNode *DominanceGraph::get_node(llvm::BasicBlock *bb) const {
-  typename node_map_type::const_iterator i = this.nodes.find(bb);
-  return i != this.nodes.end() ? i->second : 0;
+DominanceNode *DominanceGraph::get_node(llvm::BasicBlock *bb) const {
+  typename node_map_type::const_iterator i = this->nodes.find(bb);
+  return i != this->nodes.end() ? i->second : 0;
 }
 
 // Get or create a node for this block.
-DominanceNode *get_node_for_block(DominanceGraph &dg, llvm::BasicBlock *block) {
-  typename node_map_type::iterator i = dg.nodes.find(block);
-  if (i != dg.nodes.end() && i->second)
+DominanceNode *get_node_for_block(DominanceGraph *dg, llvm::BasicBlock *block) {
+  typename DominanceGraph::node_map_type::iterator i = dg->nodes.find(block);
+  if (i != dg->nodes.end() && i->second)
     return i->second;
 
   // Haven't calculated this node yet?  Get or calculate the node for the
   // immediate dominator.
-  llvm::BasicBlock *idom = dg.get_idom(block);
-  assert(idom || dg.nodes[NULL]);   
+  llvm::BasicBlock *idom = dg->get_idom(block);
+  assert(idom || dg->nodes[NULL]);   
   DominanceNode *idom_node = get_node_for_block(dg, idom);
     
   // Add a new tree node for this BasicBlock, and link it as a child of
   // IDomNode
   DominanceNode *child = new DominanceNode(block, idom_node);
-  return dg.nodes[block] = idom_node->add_child(child);
+  return dg->nodes[block] = idom_node->add_child(child);
 }
 
 // This function works in 5 steps:
@@ -160,7 +155,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   // depth-first search number 0. It points to a NULL block so that
   // numbering of real blocks can start at 1. See dominance_dfs_num
   // for more details.
-  this.vertex.push_back(NULL);
+  this->vertex.push_back(NULL);
   
   // Step 1.
   //   Do a depth-first search through the root, adding blocks to the
@@ -199,13 +194,13 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   // the first two blocks (the first is a placeholder and the second is the root).
   for (unsigned i = n; i >= 2; --i) {
     // Get the block at this dfs number.
-    llvm::BasicBlock *w = this.vertex[i];
+    llvm::BasicBlock *w = this->vertex[i];
 
     // Get the scratch data for this block, where we will store all the
     // temporary state about this block as we find its immediate dominator.
     // Note that the [] operator of llvm::DenseMap inserts a freshly constructed
     // DominanceInfoRec if w is not mapped. See FindAndConstruct in DenseMap.
-    DominanceInfoRec winfo = this.info[w];
+    DominanceInfoRec winfo = this->info[w];
 
     // Iterate through the blocks that this block semidominates until we find
     // ourselves back at this block. Note that when this loop begins, since we
@@ -214,7 +209,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     // processed as a semidominator, see the last step in this loop.
     for (unsigned j = i; buckets[j] != i; j = buckets[j]) {
       // Get the semidominated block.
-      llvm::BasicBlock *v = this.vertex[buckets[j]];
+      llvm::BasicBlock *v = this->vertex[buckets[j]];
       
       // Get the block between the root and v with the minimum semidominator,
       // or just v if we haven't processed v yet.
@@ -226,12 +221,12 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
       // This logic is a big fishy ... what exactly is going on here? It would
       // be nice to do a little illustration of the algorithm in an animated
       // graphic to show how things change.
-      if (this.info[u].semi < i) {
+      if (this->info[u].semi < i) {
         // Then v and u have the same dominator.
-        this.idoms[v] = u;
+        this->idoms[v] = u;
       } else {
         // Otherwise w is both a semidominator of v and its immediate dominator.
-        this.idoms[v] = w;
+        this->idoms[v] = w;
       }
     }
 
@@ -249,13 +244,13 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     // Iterate through blocks that point *to* this block. They might be outside
     // the scope of the root block, and if so, we shouldn't expect to find them
     // in the vertex or info map.
-    typedef GraphTraits<Inverse<llvm::BasicBlock *> > InverseTraits;
-    typedef InverseTraits::ChildIteratorType InverseIterator;
-    for (typename InverseIterator ci = InverseTraits::child_begin(w),
+    typedef llvm::GraphTraits<llvm::Inverse<llvm::BasicBlock *> > InverseTraits;
+    for (typename InverseTraits::ChildIteratorType ci =
+           InverseTraits::child_begin(w),
            e = InverseTraits::child_end(w); ci != e; ++ci) {
       llvm::BasicBlock *bb = *ci;
       // Is this precedessor outside the scope of this analysis?
-      if (!this.info.count(bb)) {
+      if (!this->info.count(bb)) {
         // Then skip it.
         continue;
       }
@@ -266,7 +261,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
 
       // Is the minimum semidominator number of u even less than this block's
       // semidominator (default above is its parent's dfs number)?
-      unsigned semiu = this.info[u].semi;
+      unsigned semiu = this->info[u].semi;
       if (semiu < winfo.semi) {
         // Then use the lower semidominator.
         winfo.semi = semiu;
@@ -276,7 +271,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     // Is the semidominator of this block still its parent?
     if (winfo.semi == winfo.parent) {
       // Then implicitly make this block's immediate dominator its parent.
-      this.idoms[w] = this.vertex[winfo.parent];
+      this->idoms[w] = this->vertex[winfo.parent];
     } else {
       // Otherwise push this block and its semidominator into their respective
       // buckets so that they map to each other. This makes the current
@@ -293,10 +288,10 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   for (unsigned j = root_i; buckets[j] != root_i; j = buckets[j]) {
     // Get a pointer to the semidominated block.
     unsigned semidominated_i = buckets[j];
-    llvm::BasicBlock *v = this.vertex[semidominated_i];
+    llvm::BasicBlock *v = this->vertex[semidominated_i];
     
     // Claim that they're also immediately dominated by the root.
-    this.idoms[v] = root;
+    this->idoms[v] = root;
   }
 
   // Step 4.
@@ -306,42 +301,42 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   // dfs order, stopping before the root.
   for (unsigned i = 2; i <= n; ++i) {
     // Get the block at this dfs number.
-    llvm::BasicBlock *w = this.vertex[i];
+    llvm::BasicBlock *w = this->vertex[i];
     
     // Get the implicit immediate dominator of this block.
-    llvm::BasicBlock *&widom = this.idoms[w];
+    llvm::BasicBlock *&widom = this->idoms[w];
 
     // Get the semidominator of this block.
-    unsigned semiw = this.info[w].semi;
+    unsigned semiw = this->info[w].semi;
 
     // Is the implicit immediate dominator not its semidominator?
-    if (widom != this.vertex[semiw]) {
+    if (widom != this->vertex[semiw]) {
       // Then reassign this block's immediate dominator to be the same as
       // the immediate dominator of its old immediate dominator.
-      widom = this.idoms[widom];
+      widom = this->idoms[widom];
     }
   }
 
   // Organize idoms and info into into DominanceNodes.
   //
   // First, make the root node.
-  dg->nodes[root] = this.root_node = new DominanceNode(root, 0);
+  this->nodes[root] = this->root_node = new DominanceNode(root, 0);
 
   // Then make children of root.
   for (unsigned i = 2; i <= n; ++i) {
     // Get the block at this dfs number.
-    llvm::BasicBlock *w = this.vertex[i];
+    llvm::BasicBlock *w = this->vertex[i];
 
     // Have we already inserted this node?
-    llvm::BasicBlock *bbnode = this.nodes[w];
+    DominanceNode *bbnode = this->nodes[w];
     if (bbnode) {
       // Skip it.
       continue;
     }
 
     // Get the immediate dominator of this block.
-    llvm::BasicBlock *immdom = this.get_idom(w);
-    assert(immdom || this.nodes[NULL]);
+    llvm::BasicBlock *immdom = this->get_idom(w);
+    assert(immdom || this->nodes[NULL]);
 
     // Lookup the node for the immediate dominator of this block
     // or create one if it doesn't exist.
@@ -349,33 +344,33 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
 
     // Create a node for this block, setting the immediate dominator
     // node as its dominator.
-    DominanceNode *child = new DominanceGraph(w, idomnode);
+    DominanceNode *child = new DominanceNode(w, idomnode);
 
     // Finally add this node as the child of its dominator and the
     // entry at this block.
-    this.nodes[w] = idomnode->add_child(child);
+    this->nodes[w] = idomnode->add_child(child);
   }
 
   // Free the scratch space. It should probably be made clear that these
   // fields are useless after we actually build the graph.
-  this.idoms.clear();
-  this.info.clear();
-  std::vector<llvm::BasicBlock *>().swap(this.vertex);
+  this->idoms.clear();
+  this->info.clear();
+  std::vector<llvm::BasicBlock *>().swap(this->vertex);
 
   // Finally assign depth-first search numbers to the dominance graph
   // itself. These numbers hang off the DominanceNodes we inserted
   // above. It also updates the state of the graph to support optimizations
   // based on these numbers, until a new node is added, which then makes
   // these dfs numbers stale.
-  this.rebuild_dfs_numbers();
+  this->rebuild_dfs_numbers();
 }
 
 // See comments in analysis.h.
 void DominanceGraph::rebuild_graph(llvm::BasicBlock *new_root) {
   // Wipe the entire DominanceGraph clean. The same function is called
   // when the DominanceGraph is destroyed.
-  this.reset();
-  this.init(new_root);
+  this->reset();
+  this->init(new_root);
 }
 
 // See comments in analysis.h.
@@ -427,7 +422,7 @@ static bool dominated_by_slow(DominanceGraph *dg, const DominanceNode *a,
 
   // Walk up the tree.
   const DominanceNode *idom;
-  while ((idom = dg->get_idom(b)) != 0 && idom != a && idom != b) {
+  while ((idom = b->idom) != 0 && idom != a && idom != b) {
     b = idom;
   }
 
@@ -451,7 +446,9 @@ bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
     return false;
   }
 
-  return properly_dominates(dg, dg->get_node(a), dg->get_node(b));
+  return properly_dominates(dg,
+                            dg->get_node(const_cast<llvm::BasicBlock *>(a)),
+                            dg->get_node(const_cast<llvm::BasicBlock *>(b)));
 }
 
 // Returns true iff a dominates b. This function will crash if dg
@@ -459,7 +456,7 @@ bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
 static bool dominates(DominanceGraph *dg, const DominanceNode *a,
                       const DominanceNode *b) {
   // Do the nodes trivially match?
-  if (b.matches(a)) {
+  if (b == a) {
     return true;
   }
 
@@ -478,7 +475,7 @@ static bool dominates(DominanceGraph *dg, const DominanceNode *a,
   dg->slow_queries++;
 
   // Are we above the threshold of slow operations?
-  if (dg->slow_queries > dg->slow_queries_threshold) {
+  if (dg->slow_queries > dg->slow_threshold) {
     // Rebuild the depth-first search numbers to optimize the graph.
     // This resets the value of slow_queries to 0.
     dg->rebuild_dfs_numbers();
@@ -495,8 +492,8 @@ static bool dominates(DominanceGraph *dg, const DominanceNode *a,
 // this will return false.
 bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
                const llvm::BasicBlock *b, bool strict = false) {
-  DominanceNode node_a = dg->get_node(a);
-  DominanceNode node_b = dg->get_node(b);
+  DominanceNode *node_a = dg->get_node(const_cast<llvm::BasicBlock *>(a));
+  DominanceNode *node_b = dg->get_node(const_cast<llvm::BasicBlock *>(b));
 
   if (strict) {
     assert(node_a && "Potentially dominating block not in graph?");
@@ -529,18 +526,18 @@ llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock 
   if (dominates(dg, a, b, strict))
       return a;
 
-  DominanceNode node_a = dg->get_node(a);
-  DominanceNode node_b = dg->get_node(b);
+  DominanceNode *node_a = dg->get_node(const_cast<llvm::BasicBlock *>(a));
+  DominanceNode *node_b = dg->get_node(const_cast<llvm::BasicBlock *>(b));
 
-  llvm::SmallPtrSet<DominatorNode*, 16> node_a_doms;
-  node_a_doms.insert(node_a);
-  DominatorNode *idom_a = node_a->idom;
+  llvm::SmallPtrSet<DominanceNode*, 16> node_a_idoms;
+  node_a_idoms.insert(node_a);
+  DominanceNode *idom_a = node_a->idom;
   while (idom_a) {
     node_a_idoms.insert(idom_a);
     idom_a = idom_a->idom;
   }
 
-  DominatorNode *idom_b = node_b->idom;
+  DominanceNode *idom_b = node_b->idom;
   while (idom_b) {
     if (node_a_idoms.count(idom_b) != 0) {
       return idom_b->block;
@@ -551,5 +548,3 @@ llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock 
 
   return NULL;
 }
-
-#endif // end DOMINATOR_H

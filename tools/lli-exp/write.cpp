@@ -11,7 +11,6 @@
 #include "graphml.h"
 #include "write.h"
 #include "write_dot.h"
-#include "dot_traits.h"
 
 #include <boost/graph/graphml.hpp>
 
@@ -42,7 +41,7 @@ void write_function_dominator_tree(llvm::Function *f, llvm::raw_ostream &os) {
 
   // Build the DominatorTree once we know we can find a well-formed entry
   // BasicBlock to the Function. This BasicBlock will be the root of the graph.
-  DominanceGraph *dg = new DominanceGraph(f->front());
+  DominanceGraph *dg = new DominanceGraph(&f->front());
 
   // Serialize the graph to os using our custom title.
   llvm::write_dot_graph(dg, os, title);
