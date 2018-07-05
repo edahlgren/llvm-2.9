@@ -394,10 +394,15 @@ static llvm::BasicBlock *get_minimum_semidominator(DominanceGraph &dg, llvm::Bas
 // Get the immediate dominator of this block. This should only be called
 // during dominance_build, otherwise idoms will be empty. There are other
 // methods to get the immediate dominator from the nodes we built.
-inline llvm::BasicBlock *get_idom(DominanceGraph &dg, llvm::BasicBlock *bb) const {
+inline llvm::BasicBlock *DominanceGraph::get_idom(llvm::BasicBlock *bb) const {
   typename llvm::DenseMap<llvm::BasicBlock*, llvm::BasicBlock*>::const_iterator i =
-    dg.idoms.find(bb);
-  return i != dg.idoms.end() ? i->second : 0;
+    this.idoms.find(bb);
+  return i != this.idoms.end() ? i->second : 0;
+}
+
+inline DominanceNode *DominanceGraph::get_node(llvm::BasicBlock *bb) const {
+  typename node_map_type::const_iterator i = this.nodes.find(bb);
+  return i != this.nodes.end() ? i->second : 0;
 }
 
 // Get or create a node for this block.
@@ -408,7 +413,7 @@ DominanceNode *get_node_for_block(DominanceGraph &dg, llvm::BasicBlock *block) {
 
   // Haven't calculated this node yet?  Get or calculate the node for the
   // immediate dominator.
-  llvm::BasicBlock *idom = get_idom(dg, block);
+  llvm::BasicBlock *idom = dg.get_idom(block);
   assert(idom || dg.nodes[NULL]);   
   DominanceNode *idom_node = get_node_for_block(dg, idom);
     
@@ -621,7 +626,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     }
 
     // Get the immediate dominator of this block.
-    llvm::BasicBlock *immdom = get_idom(this, w);
+    llvm::BasicBlock *immdom = this.get_idom(w);
     assert(immdom || this.nodes[NULL]);
 
     // Lookup the node for the immediate dominator of this block
@@ -648,7 +653,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   // above. It also updates the state of the graph to support optimizations
   // based on these numbers, until a new node is added, which then makes
   // these dfs numbers stale.
-  this.rebuild_numbers();
+  this.rebuild_dfs_numbers();
 }
 
 // See comments in analysis.h.
@@ -660,7 +665,7 @@ void DominanceGraph::rebuild_graph(llvm::BasicBlock *new_root) {
 }
 
 // See comments in analysis.h.
-void DominanceGraph::rebuild_numbers() {
+void DominanceGraph::rebuild_dfs_numbers() {
     DominanceNode *r = root_node;
     if (!r) {
       return;
@@ -691,4 +696,143 @@ void DominanceGraph::rebuild_numbers() {
 
     slow_queries = 0;
     dfs_info_valid = true;
+}
+
+// These are methods which answer questions about dominance.
+
+// Returns true iff a dominates b. This function will crash if dg
+// does not contain both a and b.
+//
+// This is the slow version of DominanceNode->dominated_by().
+static bool dominated_by_slow(DominanceGraph *dg, const DominanceNode *a,
+                    const DominanceNode *b) {
+  // Are they undefined?
+  if (a == 0 || b == 0) {
+    return false;
+  }
+
+  // Walk up the tree.
+  const DominanceNode *idom;
+  while ((idom = dg->get_idom(b)) != 0 && idom != a && idom != b) {
+    b = idom;
+  }
+
+  // Hunh? What is this doing?
+  return idom != 0;  
+}
+
+// Returns true iff a dominates b and a != b. This function will
+// crash if dg does not contain both a and b.
+static bool properly_dominates(DominanceGraph *dg, const DominanceNode *a,
+                               const DominanceNode *b) {
+  return dominated_by_slow(dg, a, b);
+}
+
+// Returns true iff a dominates b and a != b. This function will
+// crash if dg does not contain both a and b.
+bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
+                        const llvm::BasicBlock *b) {
+  // Is this a dumb, trivial match?
+  if (a == b) {
+    return false;
+  }
+
+  return properly_dominates(dg, dg->get_node(a), dg->get_node(b));
+}
+
+// Returns true iff a dominates b. This function will crash if dg
+// does not contain both a and b.
+static bool dominates(DominanceGraph *dg, const DominanceNode *a,
+                      const DominanceNode *b) {
+  // Do the nodes trivially match?
+  if (b.matches(a)) {
+    return true;
+  }
+
+  // Are they undefined?
+  if (a == 0 || b == 0) {
+    return false;
+  }
+
+  // Are the dfs numbers on nodes valid for the whole graph?
+  if (dg->dfs_info_valid) {
+    // Great, take the fast path.
+    return b->dominated_by(a);
+  }
+
+  // Count this as a slow query.
+  dg->slow_queries++;
+
+  // Are we above the threshold of slow operations?
+  if (dg->slow_queries > dg->slow_queries_threshold) {
+    // Rebuild the depth-first search numbers to optimize the graph.
+    // This resets the value of slow_queries to 0.
+    dg->rebuild_dfs_numbers();
+
+    // Now we can take the fast-path.
+    return b->dominated_by(a);
+  }
+
+  // Dang, we need to walk the whole graph.
+  return dominated_by_slow(dg, a, b);
+}
+
+// Returns true iff a dominates b. If dg doesn't contain a and b then
+// this will return false.
+bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
+               const llvm::BasicBlock *b, bool strict = false) {
+  DominanceNode node_a = dg->get_node(a);
+  DominanceNode node_b = dg->get_node(b);
+
+  if (strict) {
+    assert(node_a && "Potentially dominating block not in graph?");
+    assert(node_b && "Potentially dominated block not in graph?");
+  }
+
+  return dominates(dg, node_a, node_b);
+}
+
+// Return the nearest common dominator BasicBlock for a and b, or
+// NULL if there is no such possible block.
+llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock *a, llvm::BasicBlock *b, bool strict = false) {
+  if (strict) {
+    assert(a->getParent() == b->getParent() && "Two blocks are not in the same function");
+  }
+
+  if (a->getParent() != b->getParent()) {
+    return NULL;
+  }
+
+  llvm::BasicBlock &entry = a->getParent()->front();
+  if (a == &entry || b == &entry) {
+    return &entry;
+  }
+
+  if (dominates(dg, b, a, strict))
+      return b;
+
+  if (dominates(dg, a, b, strict))
+      return a;
+
+  DominanceNode node_a = dg->get_node(a);
+  DominanceNode node_b = dg->get_node(b);
+
+  llvm::SmallPtrSet<DominatorNode*, 16> node_a_doms;
+  node_a_doms.insert(node_a);
+  DominatorNode *idom_a = node_a->idom;
+  while (idom_a) {
+    node_a_idoms.insert(idom_a);
+    idom_a = idom_a->idom;
+  }
+
+  DominatorNode *idom_b = node_b->idom;
+  while (idom_b) {
+    if (node_a_idoms.count(idom_b) != 0) {
+      return idom_b->block;
+    }
+
+    idom_b = idom_b->idom;
+  }
+
+  return NULL;
 }

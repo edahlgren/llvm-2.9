@@ -87,12 +87,28 @@ void link_function_to_graph(FunctionGraph *fg, llvm::Function *f);
 
 // ---- Dominance graphs.
 
+// This is a vertex in a DominanceGraph (see below). It wraps a BasicBlock
+// and points to its immediate dominator and any other BasicBlocks that it
+// dominates.
 class DominanceNode {
 public:
   // 1. State.
+
+  // The BasicBlock that this wraps.
   llvm::BasicBlock *block;
+
+  // The immediate dominator of block.
   DominanceNode *idom;
+
+  // The blocks that block immediately dominates.
   std::vector<DominanceNode *> children;
+
+  // The depth-first search numbers for inward edges and outward edges.
+  // These may not be computed or valid at any time, because they depend
+  // on the state of the graph that contains this node.
+  //
+  // A valid number is anything greater than -1 (but by convention we also
+  // skip number 0).
   int dfs_num_in, dfs_num_out;
 
   // 2. Construction.
@@ -100,9 +116,13 @@ public:
     : block(bb), idom(dom), dfs_num_in(-1), dfs_num_out(-1) {}
 
   // 3. Destruction.
-  ~DominanceNode() {}
+  ~DominanceNode() {
+    // We don't free anything? Why not?
+  }
 
   // 4. Iteration.
+  //
+  // Make it easy to iterate over the blocks dominated by this node's block.
   typedef std::vector<DominanceNode *>::iterator iterator;
   typedef std::vector<DominanceNode *>::const_iterator const_iterator;
   iterator begin() { return children.begin(); }
@@ -111,7 +131,9 @@ public:
   const_iterator end() const { return children.end(); }
 
   // 5. Utility methods (minimal).
-  void set_idom(DominanceNode *new_idom) {
+  //
+  // Reset the immediate dominator of this node.
+  void reset_idom(DominanceNode *new_idom) {
     assert(idom && "No immediate dominator?");
     
     if (idom != new_idom) {
@@ -128,14 +150,16 @@ public:
     }
   }
 
+  // Add a node that is dominated by this node.
   DominanceNode *add_child(DominanceNode *child) {
     children.push_back(child);
     return child;
   }
 
-  bool compare(DominanceNode *other) {
-    if (children.size() != Other->children.size())
-      return true;
+  // Returns true if other matches this node.
+  bool matches(DominanceNode *other) {
+    if (children.size() != other->children.size())
+      return false;
 
     llvm::SmallPtrSet<llvm::BasicBlock *, 4> other_children;
     for (iterator i = other->begin(), e = other->end(); i != e; ++i) {
@@ -146,22 +170,36 @@ public:
     for (iterator i = begin(), e = end(); i != e; ++i) {
       llvm::BasicBlock *n = (*i)->block;
       if (other_children.count(n) == 0)
-        return true;
+        return false;
     }
-    return false;
+    return true;
   }
 
+  // Returns true if this node is dominated by other. It is only
+  // safe to call this method if the depth-first search numbers
+  // of this node are valid.
   bool dominated_by(DominanceNode *other) {
+    assert(dfs_num_in > 0 && dfs_num_out > 0 && "Invalid dfs numbers?");
     return dfs_num_in >= other->dfs_num_in &&
       dfs_num_out <= other->dfs_num_out;
   }  
 };
 
+// This is scratch record for initializing the state of a DominanceNode.
+// It is destroyed immediately after DominanceNodes are built.
 struct DominanceInfoRec {
   // 1. State
+
+  // The depth-first search number of a BasicBlock in the control flow.
   unsigned dfsnum;
+
+  // The parent of a BasicBlock in the control flow.
   unsigned parent;
+
+  // The semidominator of a BasicBlock in the control flow.
   unsigned semi;
+
+  // ???
   llvm::BasicBlock *label;
 
   // 2. Construction.
@@ -234,15 +272,17 @@ public:
   // assigned to them?
   bool dfs_info_valid;
 
-  // This is an arbitrary threshold for updating the depth-first search numbers.
-  // Basically we don't want to update them too often because it means walking
-  // the entire graph, but if we reach this threshold, we should update them
-  // because they make common traversals of the graph much faster.
+  // This is the count of traversals that don't take advantage of depth-first
+  // search numbers on nodes.  
   unsigned int slow_queries;
 
+  // This is the threshold for updating the depth-first search numbers. See the
+  // default below.
+  unsigned int slow_query_threshold;
+
   // 2. Construction.
-  DominanceGraph(llvm::BasicBlock *root)
-    : dfs_info_valid(false), slow_queries(0) {
+  DominanceGraph(llvm::BasicBlock *root, unsigned int threshold = 32)
+    : dfs_info_valid(false), slow_queries(0), slow_queries_threshold(threshold) {
     dominance_rebuild(this, root);
   }
 
@@ -304,7 +344,7 @@ public:
   // Iterate through the nodes in the graph and assign numbers to the nodes
   // in depth-first search order. Calling it is optional but it makes some
   // operations faster.
-  void rebuild_numbers();
+  void rebuild_dfs_numbers();
 }
 
 #endif // end ANALYSIS_H

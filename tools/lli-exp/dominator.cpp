@@ -9,6 +9,7 @@
 #include "analysis.h"
 #include "write_dot.h"
 #include "dot_traits.h"
+#include "traits.h"
 
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Support/raw_ostream.h"
