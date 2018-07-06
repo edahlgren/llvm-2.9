@@ -193,7 +193,8 @@ public:
   llvm::DenseMap<llvm::BasicBlock *, DominanceInfoRec> info;
 
   // This maps BasicBlocks to their immediately dominating BasicBlock.
-  llvm::DenseMap<llvm::BasicBlock *, llvm::BasicBlock *> idoms;
+  typedef llvm::DenseMap<llvm::BasicBlock *, llvm::BasicBlock *> doms_map_type;
+  doms_map_type idoms;
 
   // This state controls optimizations on the graph.
 
@@ -268,6 +269,9 @@ public:
 
   llvm::BasicBlock *get_idom(llvm::BasicBlock *bb) const;
   DominanceNode *get_node(llvm::BasicBlock *bb) const;
+
+  void print_idoms(llvm::raw_ostream &os, std::string title);
+  void print_vertices(llvm::raw_ostream &os, std::string title);
 
   // Same as init but clear the state of the graph first. This is safe to
   // call at any time whereas init is not.
@@ -366,6 +370,8 @@ struct DOTGraphTraits<DominanceGraph *> : public DOTGraphTraits<DominanceNode *>
   }
 };
 } // end llvm namespace.
+
+
 
 bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
                         const llvm::BasicBlock *b);

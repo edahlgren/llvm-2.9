@@ -46,6 +46,8 @@ namespace {
 
   cl::opt<bool>
   PrintDominance("dom", cl::desc("Print the dominance tree of each function"), cl::init(false));
+  cl::opt<bool>
+  PrintOldDominance("domold", cl::desc("Print the old dominance tree of each function"), cl::init(false));
 }
 
 static LLVMContext &context() {
@@ -127,6 +129,8 @@ int main(int argc, char **argv, char * const *envp) {
     }
     if (PrintDominance) {
       write_function_dominator_tree((Function *)i, outs());
+    } else if (PrintOldDominance) {
+      write_function_dominator_tree_old((Function *)i, outs());
     }
   }
 

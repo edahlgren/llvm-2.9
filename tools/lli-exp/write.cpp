@@ -12,6 +12,8 @@
 #include "write.h"
 #include "write_dot.h"
 
+#include "llvm/Analysis/Dominators.h"
+
 #include <boost/graph/graphml.hpp>
 
 void write_function_control_flow(llvm::Function *f, llvm::raw_ostream &os) {  
@@ -48,6 +50,21 @@ void write_function_dominator_tree(llvm::Function *f, llvm::raw_ostream &os) {
 
   // Don't forget to cleanup.
   delete dg;
+}
+
+void write_function_dominator_tree_old(llvm::Function *f, llvm::raw_ostream &os) {
+  std::string title = "Dominator tree for " + f->getName().str();
+  if (f->isDeclaration()) {
+    llvm::write_dot_graph(f, os, title);
+    return;
+  }
+  
+  llvm::DominatorTree *dt = new llvm::DominatorTree();
+  dt->runOnFunction(*f);
+
+  llvm::write_dot_graph(dt, os, title);
+
+  delete dt;    
 }
 
 void write_function_graph(FunctionGraph *fg, std::ostream &os) {

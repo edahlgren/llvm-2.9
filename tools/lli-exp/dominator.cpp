@@ -8,16 +8,16 @@
 
 #include "dominator.h"
 
+#include "llvm/Support/raw_ostream.h"
+
 // Iterate through the children of bb and assign all blocks a number
 // in depth-first search order. This makes more sense as a recursive
 // algorithm but that might blow the stack, so we use a more obtuse,
 // iterative one.
-static unsigned build_dominance_info_records(DominanceGraph *dg, llvm::BasicBlock *bb, unsigned n) {
+static unsigned build_dominance_info_records(DominanceGraph *dg, llvm::BasicBlock *v, unsigned n) {
   llvm::SmallVector<std::pair<llvm::BasicBlock *,
                               llvm::succ_iterator>, 32> worklist;
-
-  worklist.push_back(std::make_pair(bb, llvm::succ_begin(bb)));
-
+  worklist.push_back(std::make_pair(v, llvm::succ_begin(v)));
   while (!worklist.empty()) {
     llvm::BasicBlock *bb = worklist.back().first;
     llvm::succ_iterator next_succ = worklist.back().second;
@@ -123,6 +123,9 @@ DominanceNode *get_node_for_block(DominanceGraph *dg, llvm::BasicBlock *block) {
   // Haven't calculated this node yet?  Get or calculate the node for the
   // immediate dominator.
   llvm::BasicBlock *idom = dg->get_idom(block);
+
+  llvm::errs() << "idom: " << idom << " null: " << dg->nodes[NULL] << "\n";
+  
   assert(idom || dg->nodes[NULL]);   
   DominanceNode *idom_node = get_node_for_block(dg, idom);
     
@@ -130,6 +133,37 @@ DominanceNode *get_node_for_block(DominanceGraph *dg, llvm::BasicBlock *block) {
   // IDomNode
   DominanceNode *child = new DominanceNode(block, idom_node);
   return dg->nodes[block] = idom_node->add_child(child);
+}
+
+void DominanceGraph::print_idoms(llvm::raw_ostream &os, std::string title = "") {
+  os << "IDoms ---- ";
+  if (!title.empty()) {
+    os << title << ":";
+  }
+  os << "\n";
+
+  for (unsigned int i = 0; i < this->vertex.size(); ++i) {
+    llvm::BasicBlock *dom = this->get_idom(this->vertex[i]);
+    if (this->vertex[i] != 0) {
+      os << "DFS num: " << i
+         << " " << this->vertex[i]
+         << " dominator: " << dom
+         << " semidominator: " << this->vertex[this->info[this->vertex[i]].semi]
+         << "\n";
+    }
+  }
+}
+
+void DominanceGraph::print_vertices(llvm::raw_ostream &os, std::string title = "") {
+  os << "Vertices ---- ";
+  if (!title.empty()) {
+    os << title << ":";
+  }
+  os << "\n";
+  
+  for (unsigned int i = 0; i < this->vertex.size(); i++) {
+    os << "DFS num: " << i << " block: " << this->vertex[i] << "\n";
+  }
 }
 
 // This function works in 5 steps:
@@ -170,6 +204,10 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
   unsigned n = 0;
   n = build_dominance_info_records(this, root, n);
 
+  // Add the root node to point to no dominator.
+  this->idoms[root] = 0;
+  this->nodes[root] = 0;
+
   // These buckets map the dfs number of a block v to the dfs number of another
   // block w, where v is a semidominator of w.
   //
@@ -200,7 +238,7 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     // temporary state about this block as we find its immediate dominator.
     // Note that the [] operator of llvm::DenseMap inserts a freshly constructed
     // DominanceInfoRec if w is not mapped. See FindAndConstruct in DenseMap.
-    DominanceInfoRec winfo = this->info[w];
+    DominanceInfoRec &winfo = this->info[w];
 
     // Iterate through the blocks that this block semidominates until we find
     // ourselves back at this block. Note that when this loop begins, since we
@@ -304,16 +342,16 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     llvm::BasicBlock *w = this->vertex[i];
     
     // Get the implicit immediate dominator of this block.
-    llvm::BasicBlock *&widom = this->idoms[w];
+    llvm::BasicBlock *idomw = this->idoms[w];
 
     // Get the semidominator of this block.
-    unsigned semiw = this->info[w].semi;
-
+    llvm::BasicBlock *semiw = this->vertex[this->info[w].semi];
+    
     // Is the implicit immediate dominator not its semidominator?
-    if (widom != this->vertex[semiw]) {
+    if (idomw != semiw) {
       // Then reassign this block's immediate dominator to be the same as
       // the immediate dominator of its old immediate dominator.
-      widom = this->idoms[widom];
+      this->idoms[w] = this->get_idom(idomw);
     }
   }
 
@@ -330,12 +368,12 @@ void DominanceGraph::init(llvm::BasicBlock *root) {
     // Have we already inserted this node?
     DominanceNode *bbnode = this->nodes[w];
     if (bbnode) {
-      // Skip it.
+      // Yes, skip it.
       continue;
     }
 
     // Get the immediate dominator of this block.
-    llvm::BasicBlock *immdom = this->get_idom(w);
+    llvm::BasicBlock *immdom = this->get_idom(w);    
     assert(immdom || this->nodes[NULL]);
 
     // Lookup the node for the immediate dominator of this block

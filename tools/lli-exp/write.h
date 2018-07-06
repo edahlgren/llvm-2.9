@@ -17,6 +17,7 @@
 
 void write_function_control_flow(llvm::Function *f, llvm::raw_ostream &os);
 void write_function_dominator_tree(llvm::Function *f, llvm::raw_ostream &os);
+void write_function_dominator_tree_old(llvm::Function *f, llvm::raw_ostream &os);
 void write_function_graph(FunctionGraph *fg, std::ostream &os);
 
 #endif // end WRITE_H
