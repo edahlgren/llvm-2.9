@@ -212,16 +212,14 @@ static Loop *check_for_loop(Loops *ll, DominanceGraph *dg, llvm::BasicBlock *bb)
   return l;  
 }
 
-Loops *find_loops(DominanceGraph *dg) {
+void Loops::init(DominanceGraph *dg) {
   llvm::BasicBlock *root = dg->root_node->block;
 
-  Loops *ll = new Loops();
   for (llvm::df_iterator<llvm::BasicBlock *> ni = llvm::df_begin(root),
          ne = llvm::df_end(root); ni != ne; ++ni) {
-    Loop *l = check_for_loop(ll, dg, *ni);
+    Loop *l = check_for_loop(this, dg, *ni);
     if (l) {
-      ll->top_level_loops.push_back(l);
+      this->top_level_loops.push_back(l);
     }
   }
-  return ll;
 }

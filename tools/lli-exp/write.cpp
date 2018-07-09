@@ -63,31 +63,38 @@ void write_function_dominator_tree_old(llvm::Function *f, llvm::raw_ostream &os)
   
   llvm::DominatorTree *dt = new llvm::DominatorTree();
   dt->runOnFunction(*f);
-
+  
   llvm::write_dot_graph(dt, os, title);
 
   delete dt;    
 }
 
-void write_function_loops(llvm::Function *f, llvm::raw_ostream &os) {
-  Loops *ll;
-  if (f->isDeclaration()) {
-    ll = new Loops();
-  } else {
-    DominanceGraph *dg = new DominanceGraph(&f->front());    
-    ll = find_loops(dg);
-    delete dg;
-  }
+static void write_loop(Loop *l, llvm::raw_ostream &os, std::string context) {
+  llvm::BasicBlock *header = l->blocks.front();
+  std::string title = "Loop in " + context +
+    " with header block " + header->getName().str();
 
-  unsigned iter = 1;
+  llvm::write_dot_graph(l, os, title);
+  for (Loop::iterator i = l->begin(), e = l->end(); i != e; ++i) {
+    write_loop(*i, os, context);
+  }
+}
+
+void write_function_loops(llvm::Function *f, llvm::raw_ostream &os) {
+  if (f->isDeclaration()) {
+    return;
+  }
+  
+  DominanceGraph *dg = new DominanceGraph(&f->front());
+  Loops *ll = new Loops(dg);
+
+  std::string context = f->getName().str();
   for (Loops::iterator i = ll->begin(), e = ll->end(); i != e; ++i) {
-    Loop *loop = *i;
-    std::string title = "Loop " + std::to_string(iter) + " for " + f->getName().str();
-    llvm::write_dot_graph(loop, os, title);
-    ++iter;
+    write_loop(*i, os, context);
   }
 
   delete ll;
+  delete dg;
 }
 
 void write_function_graph(FunctionGraph *fg, std::ostream &os) {

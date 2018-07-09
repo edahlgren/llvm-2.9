@@ -411,7 +411,7 @@ void DominanceGraph::rebuild_graph(llvm::BasicBlock *new_root) {
 
 // See comments in analysis.h.
 void DominanceGraph::rebuild_dfs_numbers() {
-    DominanceNode *r = root_node;
+    DominanceNode *r = this->root_node;
     if (!r) {
       return;
     }
@@ -422,7 +422,7 @@ void DominanceGraph::rebuild_dfs_numbers() {
 
     workstack.push_back(std::make_pair(r, r->begin()));
     r->dfs_num_in = dfs_num++;
-
+    
     while (!workstack.empty()) {
       DominanceNode *node = workstack.back().first;
       typename DominanceNode::iterator it = workstack.back().second;
@@ -439,9 +439,10 @@ void DominanceGraph::rebuild_dfs_numbers() {
       }
     }
 
-    slow_queries = 0;
-    dfs_info_valid = true;
+    this->slow_queries = 0;
+    this->dfs_info_valid = true;
 }
+
 
 // These are methods which answer questions about dominance.
 

@@ -9,6 +9,7 @@
 #ifndef DOMINATOR_H
 #define DOMINATOR_H
 
+#include "llvm/Assembly/Writer.h"
 #include "llvm/BasicBlock.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/GraphTraits.h"
@@ -108,10 +109,33 @@ public:
   // safe to call this method if the depth-first search numbers
   // of this node are valid.
   bool dominated_by(const DominanceNode *other) const {
-    assert(dfs_num_in > 0 && dfs_num_out > 0 && "Invalid dfs numbers?");
+    assert(dfs_num_in >= 0 && dfs_num_out >= 0 && "Invalid dfs numbers?");
     return dfs_num_in >= other->dfs_num_in &&
       dfs_num_out <= other->dfs_num_out;
   }  
+
+  std::string to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    if (this->block)
+      llvm::WriteAsOperand(os, this->block, false);
+    else
+      os << " <<exit node>>";
+
+    os << " {" << this->dfs_num_in << "," << this->dfs_num_out << "}";
+    os << "\n";
+
+    return os.str();
+  }
+
+  void print(llvm::raw_ostream &os, unsigned level) {
+    os.indent(2 * level) << "[ level " << level << " ] " << this->to_string();
+    for (const_iterator i = begin(), e = end(); i != e; ++i) {
+      DominanceNode *next = *i;
+      next->print(os, level + 1);
+    }
+  }
 };
 
 // This is scratch record for initializing the state of a DominanceNode.
@@ -267,6 +291,26 @@ public:
     root_node = 0;
   }
 
+  void print(llvm::raw_ostream &os) {
+    std::string info_valid = "invalid";
+    if (this->dfs_info_valid) {
+      info_valid = "valid";
+    }
+    
+    os << "=============================--------------------------------\n";
+    os << "DominanceGraph:";
+    os << "\n";
+    os << "\t - dfs numbers: " + info_valid;
+    os << "\n";
+    os << "\t - slow queries: " << this->slow_queries;
+    os << "\n";
+    os << "\t - slow threshold: " + this->slow_threshold;
+    os << "\n";
+    os << "\t - nodes: \n";
+
+    this->root_node->print(os, 1);    
+  }
+
   llvm::BasicBlock *get_idom(llvm::BasicBlock *bb) const;
   DominanceNode *get_node(llvm::BasicBlock *bb) const;
 
@@ -282,6 +326,15 @@ public:
   // operations faster.
   void rebuild_dfs_numbers();
 };
+
+bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
+                        const llvm::BasicBlock *b);
+extern bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
+                      const llvm::BasicBlock *b, bool strict = false);
+extern bool dominates(DominanceGraph *dg, llvm::BasicBlock *a,
+                      llvm::BasicBlock *b, bool strict = false);
+llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock *a,
+                                           llvm::BasicBlock *b);
 
 namespace llvm {
 template <>
@@ -370,17 +423,5 @@ struct DOTGraphTraits<DominanceGraph *> : public DOTGraphTraits<DominanceNode *>
   }
 };
 } // end llvm namespace.
-
-
-
-bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
-                        const llvm::BasicBlock *b);
-
-extern bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a, const llvm::BasicBlock *b, bool strict = false);
-
-extern bool dominates(DominanceGraph *dg, llvm::BasicBlock *a, llvm::BasicBlock *b, bool strict = false);
-
-llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock *a,
-                                           llvm::BasicBlock *b);
 
 #endif // end DOMINATOR_H
