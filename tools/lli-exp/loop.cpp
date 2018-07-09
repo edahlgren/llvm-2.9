@@ -9,21 +9,25 @@
 #include "dominator.h"
 #include "loop.h"
 
-static Loop *get_loop_starting_at(Loops *ll, const llvm::BasicBlock *bb) const {
-  typename DenseMap<llvm::BasicBlock *, Loop *>::const_iterator i =
-    bb_map.find(const_cast<llvm::BasicBlock *>(bb));
-  return i != bb_map.end() ? i->second : 0;
+#include "llvm/ADT/DepthFirstIterator.h"
+
+#include <map>
+
+static Loop *get_loop_starting_at(Loops *ll, llvm::BasicBlock *bb) {
+  typename llvm::DenseMap<llvm::BasicBlock *, Loop *>::const_iterator i =
+    ll->bb_map.find(bb);
+  return i != ll->bb_map.end() ? i->second : 0;
 }
 
 static void find_backedges(DominanceGraph *dg, llvm::BasicBlock *bb,
                     std::vector<llvm::BasicBlock *> &backedges) {
-  for (typename InvBlockTraits::ChildIteratorType I =
+  for (typename InvBlockTraits::ChildIteratorType i =
          InvBlockTraits::child_begin(bb), e = InvBlockTraits::child_end(bb);
        i != e; ++i) {
     llvm::BasicBlock *n = *i;
     
     // Does bb dominate this predecessor?
-    if (dg.dominates(bb, n)) {
+    if (dominates(dg, bb, n)) {
       // Then this is a backedge. Add it to the list.
       backedges.push_back(n);
     }
@@ -32,11 +36,11 @@ static void find_backedges(DominanceGraph *dg, llvm::BasicBlock *bb,
 
 static void move_loop_into(Loop *l, Loop *parent, bool sibling = false) {
   if (sibling) {
-    llvm::BaasicBlock *header = l->blocks.front();
+    llvm::BasicBlock *header = l->blocks.front();
     assert(parent->contains(header) && "Can't insert loop because parent doesn't contain header");
     
     unsigned num_sub_loops = static_cast<unsigned>(parent->sub_loops.size());
-    for (unsigned i = 0; i != num_sub_loops, ++i) {
+    for (unsigned i = 0; i != num_sub_loops; ++i) {
       Loop *sub_loop = parent->sub_loops[i];
       
       if (sub_loop->contains(header)) {
@@ -57,16 +61,16 @@ static void reparent_loop(Loop *child, Loop *new_parent, bool sibling = false) {
     assert(child != new_parent);
   }
   
-  typename LoopsIterator i =
+  LoopsIterator i =
     std::find(old_parent->sub_loops.begin(),
               old_parent->sub_loops.end(),
-              new_child);
+              child);
   assert(i != old_parent->sub_loops.end());
 
   old_parent->sub_loops.erase(i);
-  new_child->parent_loop = 0;
+  child->parent_loop = 0;
 
-  move_loop_into(new_child, new_parent, sibling);
+  move_loop_into(child, new_parent, sibling);
 }
 
 static bool add_block_to_loop(Loops *ll, DominanceGraph *dg,
@@ -82,13 +86,13 @@ static bool add_block_to_loop(Loops *ll, DominanceGraph *dg,
   }
     
   // Is this block unreachable from the entry block?
-  if (!dg->dominates(entry_block, x)) {
+  if (!dominates(dg, entry_block, x)) {
     // Skip it.
     return false;
   }
 
   // Does this block begin a sub loop?
-  Loop *sub_loop = const_cast<Loop *>(get_loop_starting_at(ll, x));
+  Loop *sub_loop = get_loop_starting_at(ll, x);
   if (sub_loop) {
     // Then the sub loop should be an inner loop of the newly
     // created loop l above. Reparent it.
@@ -189,10 +193,10 @@ static Loop *check_for_loop(Loops *ll, DominanceGraph *dg, llvm::BasicBlock *bb)
   }
 
   // For each of the blocks in this loop ...
-  for (typename BlockIterator i = l->blocks.begin(),
+  for (BlockIterator i = l->blocks.begin(),
          e = l->blocks.end(); i != e; ++i) {
     // Add unseen inner loops.
-    Loop *new_loop = check_for_loop(*i, dg);
+    Loop *new_loop = check_for_loop(ll, dg, *i);
     if (new_loop) {
       l->sub_loops.push_back(new_loop);
       new_loop->parent_loop = l;
@@ -209,12 +213,12 @@ static Loop *check_for_loop(Loops *ll, DominanceGraph *dg, llvm::BasicBlock *bb)
 }
 
 Loops *find_loops(DominanceGraph *dg) {
-  llvm::BasicBlock *root = gd->root_node->block;
+  llvm::BasicBlock *root = dg->root_node->block;
 
   Loops *ll = new Loops();
-  for (df_iterator<llvm::BasicBlock *> ni = df_begin(root),
-         ne = df_end(root); ni != ne; ++ni) {
-    Loop *l = check_for_loop(ll, *ni, dg);
+  for (llvm::df_iterator<llvm::BasicBlock *> ni = llvm::df_begin(root),
+         ne = llvm::df_end(root); ni != ne; ++ni) {
+    Loop *l = check_for_loop(ll, dg, *ni);
     if (l) {
       ll->top_level_loops.push_back(l);
     }

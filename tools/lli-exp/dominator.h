@@ -376,8 +376,9 @@ struct DOTGraphTraits<DominanceGraph *> : public DOTGraphTraits<DominanceNode *>
 bool properly_dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
                         const llvm::BasicBlock *b);
 
-bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
-               const llvm::BasicBlock *b);
+extern bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a, const llvm::BasicBlock *b, bool strict = false);
+
+extern bool dominates(DominanceGraph *dg, llvm::BasicBlock *a, llvm::BasicBlock *b, bool strict = false);
 
 llvm::BasicBlock *nearest_common_dominator(DominanceGraph *dg, llvm::BasicBlock *a,
                                            llvm::BasicBlock *b);

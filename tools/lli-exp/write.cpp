@@ -16,6 +16,7 @@
 #include "llvm/Analysis/Dominators.h"
 
 #include <boost/graph/graphml.hpp>
+#include <string>
 
 void write_function_control_flow(llvm::Function *f, llvm::raw_ostream &os) {  
   llvm::write_dot_graph(f, os);
@@ -69,18 +70,24 @@ void write_function_dominator_tree_old(llvm::Function *f, llvm::raw_ostream &os)
 }
 
 void write_function_loops(llvm::Function *f, llvm::raw_ostream &os) {
-  std::string title = "Loops for " + f->getName().str();
-
   Loops *ll;
   if (f->isDeclaration()) {
     ll = new Loops();
   } else {
-    DominanceGraph *dg = new DominanceGraph(&f->front());
+    DominanceGraph *dg = new DominanceGraph(&f->front());    
     ll = find_loops(dg);
     delete dg;
   }
 
-  llvm::write_dot_graph(ll, os, title);  
+  unsigned iter = 1;
+  for (Loops::iterator i = ll->begin(), e = ll->end(); i != e; ++i) {
+    Loop *loop = *i;
+    std::string title = "Loop " + std::to_string(iter) + " for " + f->getName().str();
+    llvm::write_dot_graph(loop, os, title);
+    ++iter;
+  }
+
+  delete ll;
 }
 
 void write_function_graph(FunctionGraph *fg, std::ostream &os) {

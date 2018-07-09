@@ -526,10 +526,10 @@ static bool dominates(DominanceGraph *dg, const DominanceNode *a,
 
 // Returns true iff a dominates b. If dg doesn't contain a and b then
 // this will return false.
-bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
-               const llvm::BasicBlock *b, bool strict = false) {
-  DominanceNode *node_a = dg->get_node(const_cast<llvm::BasicBlock *>(a));
-  DominanceNode *node_b = dg->get_node(const_cast<llvm::BasicBlock *>(b));
+bool dominates(DominanceGraph *dg, llvm::BasicBlock *a,
+               llvm::BasicBlock *b, bool strict) {
+  DominanceNode *node_a = dg->get_node(a);
+  DominanceNode *node_b = dg->get_node(b);
 
   if (strict) {
     assert(node_a && "Potentially dominating block not in graph?");
@@ -537,6 +537,14 @@ bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
   }
 
   return dominates(dg, node_a, node_b);
+}
+
+bool dominates(DominanceGraph *dg, const llvm::BasicBlock *a,
+               const llvm::BasicBlock *b, bool strict) {
+  return dominates(dg,
+                   const_cast<llvm::BasicBlock *>(a),
+                   const_cast<llvm::BasicBlock *>(b),
+                   strict);
 }
 
 // Return the nearest common dominator BasicBlock for a and b, or
