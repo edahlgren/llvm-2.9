@@ -10,6 +10,7 @@ add_llvm_tool(lli-exp
   cfg.cpp
   dominator.cpp
   graphml.cpp
+  loop.cpp
   trace.cpp
   write.cpp
 )

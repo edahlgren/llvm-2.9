@@ -39,15 +39,19 @@ namespace {
   InputFile(cl::desc("<input bitcode>"), cl::Positional, cl::init("-"));
 
   cl::opt<bool>
-  PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(true));
+  PrintGraphML("graphml", cl::desc("Print in GraphML format"), cl::init(false));
 
   cl::opt<bool>
   PrintControlFlow("flow", cl::desc("Print the control flow graph of each function"), cl::init(false));
 
   cl::opt<bool>
   PrintDominance("dom", cl::desc("Print the dominance tree of each function"), cl::init(false));
+
   cl::opt<bool>
   PrintOldDominance("domold", cl::desc("Print the old dominance tree of each function"), cl::init(false));
+
+  cl::opt<bool>
+  PrintLoops("loops", cl::desc("Print the loops of each function"), cl::init(false));
 }
 
 static LLVMContext &context() {
@@ -129,8 +133,12 @@ int main(int argc, char **argv, char * const *envp) {
     }
     if (PrintDominance) {
       write_function_dominator_tree((Function *)i, outs());
-    } else if (PrintOldDominance) {
+    }
+    if (PrintOldDominance) {
       write_function_dominator_tree_old((Function *)i, outs());
+    }
+    if (PrintLoops) {
+      write_function_loops((Function *)i, outs());
     }
   }
 

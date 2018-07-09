@@ -9,6 +9,7 @@
 #include "cfg.h"
 #include "dominator.h"
 #include "graphml.h"
+#include "loop.h"
 #include "write.h"
 #include "write_dot.h"
 
@@ -65,6 +66,21 @@ void write_function_dominator_tree_old(llvm::Function *f, llvm::raw_ostream &os)
   llvm::write_dot_graph(dt, os, title);
 
   delete dt;    
+}
+
+void write_function_loops(llvm::Function *f, llvm::raw_ostream &os) {
+  std::string title = "Loops for " + f->getName().str();
+
+  Loops *ll;
+  if (f->isDeclaration()) {
+    ll = new Loops();
+  } else {
+    DominanceGraph *dg = new DominanceGraph(&f->front());
+    ll = find_loops(dg);
+    delete dg;
+  }
+
+  llvm::write_dot_graph(ll, os, title);  
 }
 
 void write_function_graph(FunctionGraph *fg, std::ostream &os) {

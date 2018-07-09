@@ -1,4 +1,4 @@
-//===- cfg.cpp - DominatorTree utilities ----------------------------------===//
+//===- dominator.cpp - DominatorTree utilities ----------------------------===//
 //
 //===----------------------------------------------------------------------===//
 //
@@ -124,8 +124,6 @@ DominanceNode *get_node_for_block(DominanceGraph *dg, llvm::BasicBlock *block) {
   // immediate dominator.
   llvm::BasicBlock *idom = dg->get_idom(block);
 
-  llvm::errs() << "idom: " << idom << " null: " << dg->nodes[NULL] << "\n";
-  
   assert(idom || dg->nodes[NULL]);   
   DominanceNode *idom_node = get_node_for_block(dg, idom);
     
