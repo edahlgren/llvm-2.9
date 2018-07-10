@@ -95,6 +95,7 @@ typedef std::vector<Loop *>::iterator LoopsIterator;
 
 class Loops {
 public:
+  typdef llvm::DenseMap<llvm::BasicBlock *, Loop *>::const_iterator block_iterator;
   llvm::DenseMap<llvm::BasicBlock *, Loop *> bb_map;
   std::vector<Loop *> top_level_loops;
 
@@ -106,6 +107,20 @@ public:
   Loops(DominanceGraph *dg) {
     init(dg);
   }
+
+  Loop *find_loop(llvm::BasicBlock *bb) {
+    block_iterator i = this->bb_map.find(bb);
+    return i != ll->bb_map.end() ? i->second : 0;
+  }
+
+  void map_block(llvm::BasicBlock *bb, Loop *l) {
+    if (!l) {
+      this->bb_map.erase(bb);
+      return;
+    }
+
+    this->bb_map[bb] = l;
+  } 
 
   void init(DominanceGraph *dg);
 
