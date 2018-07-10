@@ -86,7 +86,8 @@ void write_function_loops(llvm::Function *f, llvm::raw_ostream &os) {
   }
   
   DominanceGraph *dg = new DominanceGraph(&f->front());
-  Loops *ll = new Loops(dg);
+  Loops *ll = build_loop_forest(dg);
+  //Loops *ll = new Loops(dg);
 
   std::string context = f->getName().str();
   for (Loops::iterator i = ll->begin(), e = ll->end(); i != e; ++i) {

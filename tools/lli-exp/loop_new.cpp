@@ -9,7 +9,8 @@
 #include "dominator.h"
 #include "loop.h"
 
-#include "llvm/ADT/DepthFirstIterator.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
 typedef std::vector<llvm::BasicBlock *> BlockArray;
@@ -33,7 +34,7 @@ static void discover_loop_internals(Loops *forest, Loop *loop, DominanceGraph *d
       //
       // Normally this means that it's in the scope of a single function,
       // where dg->root_node is the function's entry block.
-      if (!dominates(dg, dg->root_node, pred)) {
+      if (!dominates(dg, dg->root_node->block, pred)) {
         // Nope, skip it and continue.
         continue;
       }
@@ -90,7 +91,7 @@ static void discover_loop_internals(Loops *forest, Loop *loop, DominanceGraph *d
            pe = InvBlockTraits::child_end(outer_header); pi != pe; ++pi) {
       // Is the loop for this predecessor either undefined or different
       // from the sub loop (the outermost parent) we just processed?
-      if (forest->find_loop(*pi) != outermost_loop) {
+      if (forest->find_loop(*pi) != outermost_parent) {
         // Then add it to the processing queue.
         backedges.push_back(*pi);
       }
@@ -141,14 +142,15 @@ void populate_loops_with_block(Loops *forest, llvm::BasicBlock *bb) {
 }
 
 class DFSBlockStack {
+public:
   typedef typename BlockTraits::ChildIteratorType block_succ_iter;
   std::vector<std::pair<llvm::BasicBlock *, block_succ_iter> > stack;
 
-  void push_back(llvm::BasicBlock *bb) {
+  void push(llvm::BasicBlock *bb) {
     stack.push_back(std::make_pair(bb, BlockTraits::child_begin(bb)));
   }
 
-  void pop_back() {
+  void pop() {
     stack.pop_back();
   }
   
@@ -164,13 +166,13 @@ class DFSBlockStack {
     return stack.back().second;
   }
 
-  block_succ_iter &succ_end() {
+  block_succ_iter succ_end() {
     return BlockTraits::child_end(top_block());
   }
 };
 
 void dfs_populate_loops(Loops *forest, llvm::BasicBlock *start) {
-  DFSBlockStack dstack();
+  DFSBlockStack dstack;
   llvm::DenseSet<const llvm::BasicBlock *> visited;
 
   dstack.push(start);
@@ -178,14 +180,14 @@ void dfs_populate_loops(Loops *forest, llvm::BasicBlock *start) {
 
   while (!dstack.empty()) {
     while (dstack.succ() != dstack.succ_end()) {
-      llvm::BasicBlock *bb = dstack.succ();
+      llvm::BasicBlock *bb = *dstack.succ();
 
       ++dstack.succ();
 
       if (!visited.insert(bb).second)
         continue;
 
-      dstack.push(bb)          
+      dstack.push(bb);
     }
 
     populate_loops_with_block(forest, dstack.top_block());
@@ -197,25 +199,20 @@ Loops *build_loop_forest(DominanceGraph *dg) {
   Loops *forest = new Loops();
   
   // Traverse the dominator tree using a post-order traversal.
-  for (po_iterator<DominanceNode *> i = po_begin(dg->root_node),
-         e = po_end(dg->root_node); i != e; ++i) {
+  for (llvm::po_iterator<DominanceNode *> i = llvm::po_begin(dg->root_node),
+         e = llvm::po_end(dg->root_node); i != e; ++i) {
 
     // Treat this block as a potential loop header.
     llvm::BasicBlock *header = i->block;
 
     // Try to find backedges for it. If there aren't any, then this
     // isn't a loop.
-    //
-    // Note that the SmallVector is configured to perform well for
-    // the common case (less than 5 predecessors per node), but still
-    // works for more than 4 elements.
-    llvm::SmallVector<llvm::BasicBlock *, 4> backedges;
+    std::vector<llvm::BasicBlock *> backedges;
     for (typename InvBlockTraits::ChildIteratorType pi =
            InvBlockTraits::child_begin(header),
            pe = InvBlockTraits::child_end(header); pi != pe; ++pi) {
-
       // Is this predecessor in the scope of our analysis?
-      if (!dominates(dg, dg->root_node, *pi)) {
+      if (!dominates(dg, dg->root_node->block, *pi)) {
         // Nope, try other predecessors.
         continue;
       }
@@ -239,7 +236,7 @@ Loops *build_loop_forest(DominanceGraph *dg) {
 
   // Do a final depth-first traversal to populate blocks and sub loop
   // vectors for all of the loops.
-  dfs_populate_loops(forest, dg->root_node);
+  dfs_populate_loops(forest, dg->root_node->block);
 
   // Finally return the forest.  
   return forest;

@@ -11,6 +11,7 @@ add_llvm_tool(lli-exp
   dominator.cpp
   graphml.cpp
   loop.cpp
+  loop_new.cpp
   trace.cpp
   write.cpp
 )
