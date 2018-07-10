@@ -17,6 +17,7 @@
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/DOTGraphTraits.h"
+#include "llvm/Support/raw_ostream.h"
 
 typedef llvm::GraphTraits<llvm::BasicBlock *> BlockTraits;
 typedef llvm::GraphTraits<llvm::Inverse<llvm::BasicBlock *> > InvBlockTraits;
@@ -107,6 +108,8 @@ public:
   }
 
   void init(DominanceGraph *dg);
+
+  void print(llvm::raw_ostream &os, std::string prefix = "");
 };
 
 namespace llvm {
