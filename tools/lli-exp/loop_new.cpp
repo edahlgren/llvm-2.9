@@ -13,8 +13,6 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
-typedef std::vector<llvm::BasicBlock *> BlockArray;
-
 // This is allowed to destroy backedges. Keep your own copy if you care.
 static void discover_loop_internals(Loops *forest, Loop *loop, DominanceGraph *dg,
                                     std::vector<llvm::BasicBlock *> backedges) {
@@ -106,94 +104,6 @@ static void discover_loop_internals(Loops *forest, Loop *loop, DominanceGraph *d
   loop->sub_loops.reserve(num_sub_loops);
   loop->blocks.reserve(num_blocks);
 }
-
-void populate_loops_with_block(Loops *forest, llvm::BasicBlock *bb) {
-  // For each of the loops that contain bb, until we get to the top-most
-  // one ...
-  for (Loop *sub_loop = forest->find_loop(bb); sub_loop;
-       sub_loop = sub_loop->parent_loop) {
-
-    // Is this block the header?
-    if (bb != sub_loop->header()) {
-      // No, it's not special, then just add it to the loop's blocks.
-      sub_loop->blocks.push_back(bb);
-      continue;
-    }
-
-    // Yes it's a header block. We'll take this opportunity to do loop-level
-    // things, like manage its loop's parent and reverse its ordering.
-
-    // Is this loop a top level loop (indicated by having no parent?).
-    if (!sub_loop->parent_loop) {
-      // Then add it to the forest as such.
-      forest->top_level_loops.push_back(sub_loop);
-    } else {
-      // Otherwise add this loop as a sub loop of its parent.
-      sub_loop->parent_loop->sub_loops.push_back(sub_loop);
-    }
-
-    // Since blocks and sub loops are inserted in post-order, reverse the
-    // lists, except for the loop header, which is always the first block.
-    std::reverse(sub_loop->blocks.begin() + 1,
-                 sub_loop->blocks.end());
-    std::reverse(sub_loop->sub_loops.begin(),
-                 sub_loop->sub_loops.end());
-  }
-}
-
-class DFSBlockStack {
-public:
-  typedef typename BlockTraits::ChildIteratorType block_succ_iter;
-  std::vector<std::pair<llvm::BasicBlock *, block_succ_iter> > stack;
-
-  void push(llvm::BasicBlock *bb) {
-    stack.push_back(std::make_pair(bb, BlockTraits::child_begin(bb)));
-  }
-
-  void pop() {
-    stack.pop_back();
-  }
-  
-  bool empty() {
-    return stack.empty();
-  }
-
-  llvm::BasicBlock *top_block() {
-    return stack.back().first;
-  }
-
-  block_succ_iter &succ() {
-    return stack.back().second;
-  }
-
-  block_succ_iter succ_end() {
-    return BlockTraits::child_end(top_block());
-  }
-};
-
-void dfs_populate_loops(Loops *forest, llvm::BasicBlock *start) {
-  DFSBlockStack dstack;
-  llvm::DenseSet<const llvm::BasicBlock *> visited;
-
-  dstack.push(start);
-  visited.insert(start);
-
-  while (!dstack.empty()) {
-    while (dstack.succ() != dstack.succ_end()) {
-      llvm::BasicBlock *bb = *dstack.succ();
-
-      ++dstack.succ();
-
-      if (!visited.insert(bb).second)
-        continue;
-
-      dstack.push(bb);
-    }
-
-    populate_loops_with_block(forest, dstack.top_block());
-    dstack.pop();
-  }
-}
                               
 Loops *build_loop_forest(DominanceGraph *dg) {
   Loops *forest = new Loops();
@@ -234,9 +144,44 @@ Loops *build_loop_forest(DominanceGraph *dg) {
     }    
   }
 
-  // Do a final depth-first traversal to populate blocks and sub loop
+  // Do a final post-order traversal to populate blocks and sub loop
   // vectors for all of the loops.
-  dfs_populate_loops(forest, dg->root_node->block);
+  for (llvm::po_iterator<DominanceNode *> i = llvm::po_begin(dg->root_node),
+         e = llvm::po_end(dg->root_node); i != e; ++i) {
+    llvm::BasicBlock *bb = i->block;
+    
+    // For each of the loops that contain bb, until we get to the top-most
+    // one ...
+    for (Loop *sub_loop = forest->find_loop(bb); sub_loop;
+         sub_loop = sub_loop->parent_loop) {
+
+      // Is this block the header?
+      if (bb != sub_loop->header()) {
+        // No, it's not special, then just add it to the loop's blocks.
+        sub_loop->blocks.push_back(bb);
+        continue;
+      }
+
+      // Yes it's a header block. We'll take this opportunity to do loop-level
+      // things, like manage its loop's parent and reverse its ordering.
+
+      // Is this loop a top level loop (indicated by having no parent?).
+      if (!sub_loop->parent_loop) {
+        // Then add it to the forest as such.
+        forest->top_level_loops.push_back(sub_loop);
+      } else {
+        // Otherwise add this loop as a sub loop of its parent.
+        sub_loop->parent_loop->sub_loops.push_back(sub_loop);
+      }
+
+      // Since blocks and sub loops are inserted in post-order, reverse the
+      // lists, except for the loop header, which is always the first block.
+      std::reverse(sub_loop->blocks.begin() + 1,
+                   sub_loop->blocks.end());
+      std::reverse(sub_loop->sub_loops.begin(),
+                   sub_loop->sub_loops.end());
+    }
+  }
 
   // Finally return the forest.  
   return forest;
