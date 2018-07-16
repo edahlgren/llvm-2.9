@@ -46,9 +46,10 @@ public:
   // the graph.
   SEGIndexSet succ;
   
-  // Controls whether this node is "non-preserving". This makes
-  // this an "m-node" in the sense of ramalingam's paper.
-  bool non_preserving;
+  // Controls whether this node is "preserving". This makes
+  // this an "p-node" in the sense of ramalingam's paper. If
+  // this is false, then this is an "m-node", or "non-preserving".
+  bool is_pnode;
 
   // This is true if this node uses a relevant definition.
   // ??
@@ -76,6 +77,10 @@ public:
   }
 
   u32 rank() { return MAX_U32 - rep; }
+
+  bool represents_itself() { return rep == MAX_U32; }
+
+  bool unreachable() { return rep == 0; }
 };
 
 // This is a sparse evaluation graph.
@@ -95,6 +100,8 @@ public:
   u32 max_size;
   
   SEG(u32 max_size) : max_size(max_size) {
+    assert(max_size < MAX_U32);
+    
     // Create a node at index 0 that we will totally ignore. It's used
     // only to detect errors.
     //
@@ -116,6 +123,24 @@ public:
   iter begin() { return std::next(nodes.begin()); }
   iter end() { return nodes.end(); }
 
+  SEGNode *get_node(SEGIndex i) {
+    assert_valid_index(i);
+    return nodes[i];
+  }
+
+  SEGNode *get_representative_node(SEGIndex i) {
+    return get_node(get_representative_node(i));
+  }
+
+  SEGIndex get_representative_index(SEGIndex i) {
+    assert_valid_index(i);
+    if (nodes[i]->represents_itself()) {
+      return i;
+    }
+    node->rep = get_representative_index(node->rep);
+    return node->rep;
+  }
+  
   SEGIndex make_and_insert_node(bool non_preserving) {
     // Create the node and add it to the graph.
     nodes.push_back(new SEGNode(non_preserving));
@@ -149,6 +174,8 @@ public:
     assert(nodes[i].rep > max_size && "invalid index: not a set rep");
   }
 
+  void print(std::ostream &os);
+  bool node_survives_reduction(SEGNode *node);
   void reduce();
   void extend(DFG *dfg);
 };
