@@ -1,9 +1,9 @@
-typedef u64 SEGIndex;
+typedef u32 SEGIndex;
 
 class SEGIndexSet {
 public:
   std::vector<SEGIndex> set;
-  typedef std::vector<SEGIndex>::iterator index_iter;
+  typedef std::vector<SEGIndex>::iterator iter;
 
   index_iter begin() { return set.begin(); }
   index_iter end() { return set.end(); }
@@ -23,6 +23,16 @@ public:
       set.pop_back();
     }
   }
+
+  void destructive_copy(SEGIndexSet& rhs) {
+    set.swap(rhs.set);
+    rhs.set.clear();
+  }
+  
+  void operator|=(const SEGIndexSet& rhs)
+  {
+    set.insert(set.end(), rhs.set.begin(), rhs.set.end());
+  }
 };
 
 // This is a node in a sparse evaluation graph.
@@ -30,11 +40,11 @@ class SEGNode {
 public:
   // These are the indexes of the predecessors of this node in
   // the graph.
-  SEGIndexSet predecessors;
+  SEGIndexSet pred;
 
   // These are the indexes of the successors of this node in
   // the graph.
-  SEGIndexSet successors;
+  SEGIndexSet succ;
   
   // Controls whether this node is "non-preserving". This makes
   // this an "m-node" in the sense of ramalingam's paper.
@@ -57,12 +67,15 @@ public:
   u32 rep;
 
   SEGNode(bool non_preserving) :
-    non_preserving(non_preserving),
+  non_preserving(non_preserving),
     uses_relevant_def(false),
     has_const_transfer_func(false),
     rep(MAX_U32),
     dfs_num(0),
-    del(false) {}
+    del(false) {
+  }
+
+  u32 rank() { return MAX_U32 - rep; }
 };
 
 // This is a sparse evaluation graph.
@@ -77,22 +90,11 @@ public:
   // together to form edges. Each node keeps track of its own edges
   // for preceeding and succeeding nodes.
   std::vector<SEGNode *> nodes;
-  typedef std::vector<SEGNode *>::iterator node_iter;
+  typedef std::vector<SEGNode *>::iterator iter;
 
   u32 max_size;
   
   SEG(u32 max_size) : max_size(max_size) {
-    init();
-  }
-
-  ~SEG() {
-    for (node_iter i = nodes.begin(), e = nodes.end(); i != e; i++) {
-      SEGNode *node = *i;
-      delete node;
-    }
-  }
-
-  void init() {
     // Create a node at index 0 that we will totally ignore. It's used
     // only to detect errors.
     //
@@ -104,12 +106,15 @@ public:
     start = make_and_insert_node(true /* non_preserving */);
   }
 
-  bool assert_valid_index(SEGIndex i) {
-    assert(i > 0 && "invalid index: 0");
-    assert(i < nodes.size() && "invalid index: greater than graph size");
-    assert(nodes[i].rep > 0 && "invalid index: node was deleted");
-    assert(nodes[i].rep > max_size && "invalid index: not a set rep");
+  ~SEG() {
+    for (iter i = nodes.begin(), e = nodes.end(); i != e; i++) {
+      SEGNode *node = *i;
+      delete node;
+    }
   }
+
+  iter begin() { return std::next(nodes.begin()); }
+  iter end() { return nodes.end(); }
 
   SEGIndex make_and_insert_node(bool non_preserving) {
     // Create the node and add it to the graph.
@@ -137,9 +142,20 @@ public:
     }
   }
 
+  bool assert_valid_index(SEGIndex i) {
+    assert(i > 0 && "invalid index: 0");
+    assert(i < nodes.size() && "invalid index: greater than graph size");
+    assert(nodes[i].rep > 0 && "invalid index: node was deleted");
+    assert(nodes[i].rep > max_size && "invalid index: not a set rep");
+  }
+
   void reduce();
   void extend(DFG *dfg);
 };
+
+// Predicates.
+bool non_preserving
+
 
 // This could in theory be put someplace else. The above methods
 // are supposed to be generic.
