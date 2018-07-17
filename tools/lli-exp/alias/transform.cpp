@@ -1,3 +1,15 @@
+typedef std::tuple<SEGNode *, SEGNode *, SEGIndex> SquashOrder;
+
+static bool trivially_squash(SEGIndex a, SEGIndex b) {
+  // Are the nodes trivially the same?
+  if (a == b) {
+    // We can only squash pnodes into other nodes.
+    assert(t4->graph->get_node(b)->is_pnode);
+    return true;
+  }
+  return false;
+}
+
 // This squashes a and b into each other, returning the index of the
 // node that represents the other (could be a or b). This only applies
 // to the T4 transformation. There arex other sematics for squashing
@@ -30,7 +42,7 @@ static SEGIndex squash(T4 *t4, SEGIndex a, SEGIndex b) {
     na->rep--;
   }
 
-  // Require pointers to the nodes and ensure that our rank relation
+  // Reaquire pointers to the nodes and ensure that our rank relation
   // now holds.
   na = t4->graph->get_node(a), nb = t4->graph->get_node(b);
   assert(na->rank() > nb->rank());
@@ -39,6 +51,7 @@ static SEGIndex squash(T4 *t4, SEGIndex a, SEGIndex b) {
   assert(nb->is_pnode);
     
   // Finally, squash.
+  na->pnode |= nb->pnode;
   na->uses_relevant_def |= nb->uses_relevant_def;
   na->has_const_transfer_func |= nb->has_const_transfer_func;
   na->pred |= nb->pred;
@@ -257,4 +270,220 @@ void T4::run() {
 
   // Finish the transformation.
   return;
+}
+
+static SquashOrder generic_squash_order(SEG *graph, SEGIndex a, SEGIndex b) {
+  // Get pointers to the nodes.
+  SEGNode *na = graph->get_node(a), *nb = graph->get_node(b);
+
+  // Is a's rank below b's?
+  if (na->rank() < nb->rank()) {
+    // That's not good, we want to preserve the opposite. Do so by
+    // giving a b's rank.
+    na->rep = MAX_U32 - nb->rank();
+  }
+
+  // Ensure that our rank relation holds.
+  assert(na->rank() > nb->rank());
+
+  return std::make_tuple(na, nb, a);
+}
+
+// squash nodes at indices a and b into each other for the T2 transformation.
+static SEGIndex squash(T2 *t2, SEGIndex a, SEGIndex b) {
+  if (trivially_squash(a, b)) {
+    return a;
+  }
+
+  // Rank order the nodes so that node_1.rank() > node_2.rank().
+  SEGNode *node_1, node_2;
+  SEGIndex node_1_index;  
+  std::tie(node_1, node_2, node_1_index) = generic_squash_order(t2->graph, a, b);
+
+  // Assert that we're only squashing a pnode.
+  assert(node_2->is_pnode);
+
+  // Squash node_2 into node_1.
+  //
+  // 1. Merge properties. Unlike other transformations, this does not
+  //    include merging the predecessor lists.
+  node_1->pnode |= node_2->pnode;
+  node_1->uses_relevant_def |= node_2->uses_relevant_def;
+  node_1->has_const_transfer_func |= node_2->has_const_transfer_func;
+  
+  // 2. Represent node_2 using node_1.
+  node_2->rep = node_1_index;
+
+  return node_1_index;
+}
+
+// Apply the T2 transform to a node in the graph. 
+static void apply_transform(T2 *t2, SEGIndex index) {
+  // Assert the precondition.
+  SEGNode *node = t2->graph->get_representative_node(*i);
+  assert(node->pred.size() == 1);
+
+  // Get the single predecessor.
+  SEGIndexSet::iter pi = node->pred.begin();
+  SEGIndex rep_index = t2->graph->get_representative_node(*pi);
+
+  // Squash the pnode into its predecessor.
+  rep_index = squash(t2, rep_index, index);
+
+  // Assert that the predecessor is the new rep.
+  SEGNode *rep = t2->graph->get_node(rep_index);
+  assert(rep->represents_itself());
+  assert(node->rep == rep_index);
+}
+
+// Run the T2 transformation on the graph.
+void T2::run(SEGIndexSet &torder) {
+  // Iterate through the topological order.
+  for (SEGIndexSet::iter i = torder.begin(), e = torder.end();
+       i != e; ++i) {
+
+    // Get the representative node.
+    SEGNode *node = this->graph->get_representative_node(*i);
+
+    // Is this node a candidate for the T2 transformation?
+    if (node->pnode &&
+        !node->unreachable() &&
+        node->pred.size() == 1) {
+      // Yes, apply it.
+      apply_transform(this, *i);
+    }
+  }
+}
+
+void apply_transform(T6 *t6, SEGIndex index) {
+  SEGNode *node = t6->graph->get_node(index);
+  node->del = false;
+
+  if (node->pnode &&
+      !this->graph->node_survives_reduction(node)) {
+    t6->pnode_neg.push_back(node);
+  }
+
+  for (SEGIndexSet::iter i = node->pred.begin(), e = node->pred.end();
+       i != e; i++) {
+    SEGIndex rep_index = t6->graph->get_representative_index(*i);
+
+    // Skip self-loops and unreachable nodes.
+    if (rep_index == index ||
+        t6->graph->unreachable_index(rep_index)) {
+      continue;
+    }
+
+    SEGNode *rep_node = t6->graph->get_node(rep_index);
+    if (rep_node->del) {
+      apply_transform(t6, rep_index);
+    }
+
+    if (rep_node->pnode &&
+        !this->graph->node_survives_reduction(rep_node)) {
+      rep_node->succ.insert(index);
+    }
+  }
+}
+
+void T6::run(SEGIndexSet &rdefs) {
+  for (SEGIndexSet::iter i = rdefs.begin(), e = rdefs.end();
+       i != e; ++i) {
+    // Was this node deleted?
+    if (this->graph->get_node(*i)->del) {
+      // Yes, skip it.
+      continue;
+    }
+
+    // Was the representative node deleted?
+    SEGIndex rep_index = this->graph->get_representative_index(*i);
+    if (this->graph->get_node(rep_index)->del) {
+      apply_transform(this, rep_index);
+    }
+  }
+
+  for (SEGIndex i = 1; i < this->graph->nodes.size(); i++) {
+    SEGNode *node = this->graph->get_node(i);
+    if (node->del) {
+      node->rep = 0;
+      assert(node->unreachable());
+    }
+  }
+}
+
+// Might be best to make this generic.
+SEGIndex squash(T5 *t5, SEGIndex index, SEGIndex index) {
+  if (trivially_squash(a, b)) {
+    return a;
+  }
+
+  // Rank order the nodes so that node_1.rank() > node_2.rank().
+  SEGNode *node_1, node_2;
+  SEGIndex node_1_index;  
+  std::tie(node_1, node_2, node_1_index) = generic_squash_order(t5->graph, a, b);
+
+  // Assert that we're only squashing a pnode.
+  assert(node_2->is_pnode);
+
+  // Squash node_2 into node_1.
+  node_1->pnode |= node_2->pnode;
+  node_1->uses_relevant_def |= node_2->uses_relevant_def;
+  node_1->has_const_transfer_func |= node_2->has_const_transfer_func;
+  node_1->pred |= node_2->pred;
+  
+  // 2. Represent node_2 using node_1.
+  node_2->rep = node_1_index;
+
+  return node_1_index;
+
+  
+}
+
+void apply_transform(T5 *t5, SEGIndex index) {
+  SEGNode *node = t5->graph->get_node(index);
+  node->dfs_num = 0;
+
+  for (SEGIndexSet::iter i = node->succ.begin(), e = node->succ.end();
+       i != e; i++) {
+    SEGIndex *succ_index = t5->graph->get_representative_index(*i);
+    SEGNode *succ = t5->graph->get_node(succ_index);
+    if (succ->pnode &&
+        succ->dfs_num &&
+        !t5->graph->node_survives_reduction(succ)) {
+      apply_transform(t5, succ_index);
+    }
+  }
+
+  if (node->succ.size() == 1) {
+    SEGIndexSet::iter si = node->succ.begin();
+    SEGIndex succ_index = t5->graph->get_representative_node(*si);
+
+    rep_index = squash(t5, succ_index, index);
+
+    // Assert that the successor is the new rep.
+    SEGNode *rep = t5->graph->get_node(rep_index);
+    assert(rep->represents_itself());
+    assert(node->rep == rep_index);
+
+    t5->new_reps.push_back(succ_index);
+  }
+}
+
+void T5::run(SEGIndexSet &pnode_neg) {
+  for (SEGIndexSet::iter i = pnode_neg.begin(), i = pnode_node.end();
+       i != e; i++) {
+    SEGIndex rep_index = this->graph->get_representative_index(*i);
+
+    // Don't process unreachable nodes.
+    if (t5->graph->unreachable_index(rep_index)) {
+      continue;
+    }
+        
+    SEGNode *node = this->graph->get_node(rep_index);
+    if (node->pnode &&
+        node->dfs_num &&
+        !t5->graph->node_survives_reduction(node)) {
+      apply_transform(t5, rep_index);
+    }        
+  }
 }

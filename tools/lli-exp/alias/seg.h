@@ -8,6 +8,10 @@ public:
   index_iter begin() { return set.begin(); }
   index_iter end() { return set.end(); }
 
+  unsigned size() {
+    return set.size();
+  }
+
   bool contains(SEGIndex i) {
     return std::find(set.begin(), set.end(), i) != set.end();
   }
@@ -174,15 +178,15 @@ public:
     assert(nodes[i].rep > max_size && "invalid index: not a set rep");
   }
 
+  bool unreachable_index(SEGIndex i) {
+    return !i || nodes[i]->rep == 0;
+  }
+
   void print(std::ostream &os);
   bool node_survives_reduction(SEGNode *node);
   void reduce();
   void extend(DFG *dfg);
 };
-
-// Predicates.
-bool non_preserving
-
 
 // This could in theory be put someplace else. The above methods
 // are supposed to be generic.
