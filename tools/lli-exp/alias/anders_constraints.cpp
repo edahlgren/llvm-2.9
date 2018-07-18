@@ -379,6 +379,8 @@ static bool is_address_taken(Value *v) const {
 // * The nodes for the varargs of a function.
 // at_args:
 // * The args of addr-taken func (exception for the node-info check)
+// gep_ce_nodes: 
+// * The list of value nodes for constant GEP expr.
 // ext_info:
 // * Info about external functions.
 u32 next_node;
@@ -386,7 +388,21 @@ std::vector<Node *> nodes;
 llvm::DenseMap<llvm::Value*, u32> value_nodes, object_nodes;
 llvm::DenseMap<llvm::Function*, u32> ret_nodes, vararg_nodes;
 llvm::DenseSet<llvm::Value*> at_args;
+std::vector<u32> gep_ce_nodes;
 ExtInfo *ext_info;
+
+static u32 find_value_node(llvm::Value *v, bool allow_null = false) const {
+}
+
+static u32 find_object_node(llvm::Value *v, bool allow_null = false) const {
+}
+
+static u32 find_ret_node(llvm::Function *f) const {
+}
+
+static u32 find_vararg_node(llvm::Function *f) const {
+}
+
 
 static void add_double_object_node(llvm::Value *v) {
   u32 value_node = next_node++;
@@ -530,6 +546,31 @@ static void add_function_constraints(llvm::Function *f) {
 }
 
 static void add_const_gep_constraints(llvm::Value *v) {
+  assert(v);
+
+  for (llvm::Value::use_iterator i = v->use_begin(); e = v->use_end();
+       i != e; i++) {
+    llvm::ConstantExpr *exp = llvm::dyn_cast<llvm::ConstantExpr>(*i);
+    if (expr) {
+      if (expr->getOpcode() == llvm::Instruction::BitCast) {
+        // Recurse.
+        add_const_gep_constraints(expr);
+      } else if (expr->getOpcode() == llvm::Instruction::GetElementPtr) {
+        // A GEP can only use a pointer as its first op.
+        assert(expr->getOperand(0) == v);
+
+        // Save it.
+        assert(!value_nodes.count(expr));
+        u32 value_node = next_node++;
+        nodes.push_back(new Node(expr));
+        value_nodes[expr] = value_node;
+
+        // Keep track of it, to initialize it after other globals.
+        gep_ce_nodes.push_back(value_node);
+      }
+    }
+  }
+
 }
 
 static void add_global_constraints(llvm::GlobalVariable *g) {
@@ -581,11 +622,171 @@ static void add_global_constraints(llvm::GlobalVariable *g) {
   add_constraint(ConstraintAddrOf, g_value_node, g_object_node);
 }
 
-AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionIterator &fi) {
+//The nodes that have already been visited by proc_global_init or proc_gep_ce.
+//The value is the return of proc_global_init, or 1 for proc_gep_ce.
+llvm::DenseMap<u32, u32> globals_initialized;
+
+static llvm::Constant *strip_bitcasts(llvm::Constant *c) {
+  for (llvm::ConstExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
+       expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(c)) {
+    switch (expr->getOpcode()) {
+    case llvm::Instruction::BitCast:
+      c = expr->getOperand(0);
+      break;
+    case llvm::Instruction::IntToPtr:
+    case llvm::Instruction::PtrToInt:
+    case llvm::Instruction::GetElementPtr:
+      return c;
+    default:
+    }
+  }
+  
+  return c;
+}
+
+static void initialize_gep(u32 value_node_expr) {
+}
+
+static void initialize_global(u32 object_node, llvm::Constant *c, bool first = false) {
+  assert(object_node && c);
+
+  // Step 1.
+  //
+  // Have we already initialized it? Then just return it.
+  llvm::DenseMap<u32, u32>::iterator g_it = globals_initialized.find(object_node);
+  if (g_it != globals_initialized.end()) {
+    return g_it->second;
+  }
+
+  // Step 2.
+  //
+  // Strip bitcast expressions from c until we find a non-expr value,
+  // a GEP, or one of the IntToPtr/PtrToInt instructions below.
+  c = strip_bitcasts(c);
+
+  // Step 3.
+  //
+  // Handle IntToPtr and PtrToInt instructions.  
+  llvm::ConstExpr *const_expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
+  switch (const_expr->getOpcode()) {
+  case llvm::Instruction::IntToPtr:
+    // We don't trace int->ptr for globals.
+    c = 0;
+    break;
+  case llvm::Instruction::PtrToInt:
+    // Exit on a ptr->int instruction.
+    if (first) {
+      globals_initialized[object_node] = 1;
+    }
+    // Why don't we add a constraint here?
+    return 1;
+  default:
+  }
+
+  // Step 4.
+  //
+  // Handle an invalidated constant (see IntToPtr above).
+  if (!c) {
+    if (first) {
+      globals_initialized[object_node] = 1;
+    }
+    add_constraint(ConstraintAddrOf, object_node, UnknownTarget);
+    return 1;
+  }
+
+  // Step 5.
+  //
+  // Handle a null or undefined constant.
+  if (c->isNullValue() || llvm::isa<llvm::UndefValue>(c)) {
+    if (first) {
+      globals_initialized[object_node] = 1;      
+    }
+    // Same as above, why don't we add a constraint here?
+    return 1;
+  }
+
+  // Step 6.
+  //
+  // Handle a single value constant.
+  if (c->getType()->isSingleValueType()) {
+    // Not a pointer?
+    bool pointer = llvm::isa<llvm::PointerType>(c->getType());
+    if (!pointer) {
+      if (first) {
+        globals_initialized[object_node] = 1;
+      }
+      return 1;
+    }
+
+    // Not a const expression?
+    llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
+    if (!expr) {
+      u32 object_node_const = find_object_node(c);
+      add_constraint(ConstraintAddrOf, object_node, object_node_const);
+
+      if (first) {
+        globals_initialized[object_node] = 1;
+      }
+      return 1;
+    }
+
+    // Not found?
+    u32 value_node_expr = find_value_node(expr, 1);
+    if (!value_node_expr) {
+      value_node_expr = next_node++;
+      nodes.push_back(new Node(expr));
+      value_node[expr] = value_node_expr;
+    }
+
+    // Initialize and return.
+    initialize_gep(value_node_expr);
+    add_constraint(ConstraintCopy, object_node, value_node_expr);
+    
+    if (first) {
+      globals_initialized[object_node] = 1;
+    }
+    return 1;
+  }
+
+  // Step 7.
+  //
+  // Handle constant structs.
+  llvm::ConstantStruct *cs = llvm::dyn_cast<llvm::ConstantStruct>(c);
+  if (cs) {
+    u32 off = 0;
+    for (int i = 0; i < cs->getNumOperands(); i++) {
+      // Recurse.
+      off += initialize_global(object_node + off, c->getOperand(i), false);
+    }
+
+    if (first) {
+      globals_initialized[object_node] = off;
+    }
+    return off;
+  }
+
+  // Step 8.
+  //
+  // Handle constant arrays. We expect nothing else at this point.
+  llvm::ConstantArray *ca = llvm::dyn_cast<llvm::ConstantArray>(c);
+  assert(ca && "unexpected multi-value constant");
+
+  u32 off = 0;
+  for (int i = 0; i < ca->getNumOperands(); i++) {
+    off = initialize_global(object_node, ca->getOperand(i), false);
+  }
+
+  if (first) {
+    globals_initialized[object_node] = off;
+  }
+  return off;
+}
+
+AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionIterator *fi) {
   // Step 1.
   //
   // Add the placeholder nodes (the ones that come before the first
-  // real node).
+  // real node) and position the first node.
   for (u32 i = 0; i < FirstNode; i++) {
     // Initialize them with empty llvm::Values.
     Node *node = new Node();
@@ -599,7 +800,6 @@ AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionItera
     }
     nodes.push_back(new Node);
   }
-
   next_node = FirstNode;
 
   // Step 2.
@@ -629,8 +829,43 @@ AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionItera
   //
   // Add constraints for globals. This might include adding constraints
   // for const GEP expressions using the global.
-  for (llvm::Module::global_iterator i = m->global_begin(), i = m->global_end();
+  for (llvm::Module::global_iterator i = m->global_begin(), e = m->global_end();
        i != e; i++) {
     add_global_constraints(i);
   }
+
+  // Step 5.
+  //
+  // Initialize globals (separately from Step 4). This is because an
+  // initializer may refer to a global below it.
+  for (llvm::Module::global_iterator i = m->global_begin(), e = m->global_end();
+       i != e; i++) {
+    llvm::GlobalVariable *g = *i;
+    if (g->hasInitializer()) {
+      u32 object_node = find_object_node(g);
+      initialize_global(object_node, g->getInitializer());
+    }
+  }
+
+  // Step 6.
+  //
+  // Initialize the GEP constant expressions.
+  for (int i = 0; i < gep_ce_nodes.size(); i++) {
+    u32 value_node_expr = gep_ce_nodes[i];
+    initialize_gep(value_node_expr);
+  }
+
+  // Step 7.
+  //
+  // Visit the instructions in each function and process them.
+  for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
+    if (!ext_info->is_ext(i)) {
+      fi->process_function(i);
+    }
+  }
+
+  // Step 8.
+  //
+  // Make sure that the nodes were processed.
+  assert(next_node == nodes.size());
 }

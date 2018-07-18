@@ -145,7 +145,7 @@ public:
     return node->rep;
   }
   
-  SEGIndex make_and_insert_node(bool non_preserving) {
+  SEGIndex insert_new_node(bool non_preserving) {
     // Create the node and add it to the graph.
     nodes.push_back(new SEGNode(non_preserving));
 
