@@ -8,10 +8,15 @@ public:
   std::vector<u32> defs;  // Store constraint -> node containing store
   std::vector<u32> uses;  // Load constraint -> node containing load
 
-  std::map<llvm::BasicBlock*, u32> bb_start; // Start nodes for BasicBlocks
-  typedef std::map<llvm::BasicBlock*, u32>::iterator bb_iterator;
+  std::map<llvm::BasicBlock *, u32> bb_start; // Start nodes for BasicBlocks
+  typedef std::map<llvm::BasicBlock *, u32>::iterator bb_iterator;
 
-  std::map<llvm::Function*, u32> fun_start; // Start nodes for Functions  
+  std::map<llvm::Function *, u32> func_start_nodes; // Start nodes for Functions  
+  std::map<u32, std::vector<llvm::Function *> > func_callsites; // callsite -> function targets
+  std::map<llvm::Function *, u32> func_ret_nodes; // function -> return node
+  std::map<u32, u32> callsite_succ; // callsite -> local successor
+  std::vector<u32> idr_cons; // indices of constraints from idr calls
+  std::vector<std::pair<llvm::CallInst *, u32> > idr_calls; // <idr call, callsite> pairs
 };
 
 static llvm::Function* calledFunction(llvm::CallInst *ci) {
@@ -32,7 +37,19 @@ static llvm::Function* calledFunction(llvm::CallInst *ci) {
   return 0;
 }
 
-static void add_call_edges(llvm::Instruction *inst) {
+class BlockState {
+public:
+  bool contains_call;
+  u32 constraints_sz;
+  u32 position;
+
+  BlockState(u32 position) :
+    contains_call(false),
+    constraints_sz(0),
+    position(position) {}
+};
+
+static void Processor::add_call_edges(BlockState *bs, llvm::Instruction *inst) {
   llvm::CallInst *ci = llvm::cast<llvm::CallInst>(inst);
   
   // Step 1.
@@ -40,71 +57,92 @@ static void add_call_edges(llvm::Instruction *inst) {
   // Handle direct calls.
   llvm::Function *f = calledFunction(ci);
   if (f) {
-    // Not an external call.
+    // Step 1.1.
+    //
+    // Process non-external calls first.
     if (!ext_info->is_ext(f)) {
-      block_call = true;
-      fun_cs[n].push_back(F);
+      // Has a call.
+      bs->contains_call = true;
 
-      // guarantee a single successor for the callsite
-      //
-      assert(!call_succ.count(n));
-      u32 next = create_node();
-      call_succ[n] = next;
-      add_edge(n,next); n = next;
+      this->func_callsites[bs->position].push_back(f);
+
+      assert(!this->callsite_succ.count(bs->position));
+      u32 next = this->graph->insert_new_node(PNODE);
+      this->callsite_succ[bs->position] = next;
+
+      this->graph->connect_nodes(bs->position, next);
+      bs->position = next;
+
       return;
     }
 
-    // see how many stores were added
+    // Step 1.2.
     //
+    // Count how many store constraints were added.
     u32 num_stores = 0;
-    for (u32 i = curr_cons; i < cons_sz; ++i) {
-      if (constraints[i].type == store_cons) { num_stores++; }
-    }
-    
-    // memcpy/move, etc can create multiple loads and stores; we
-    // want to treat each load/store pair in parallel, so we
-    // create separate nodes for each pair and create a
-    // "diamond" in the CFG -- we are aided by the fact that the
-    // constraint generator placed the related pairs of
-    // constraints in sequence: <load,store>, <load,store>, ...
-    //
-    if (num_stores > 1) {
-      u32 b = create_node(); // the bottom of the diamond
-      
-      for (u32 i = 0; i < num_stores*2; i += 2) {
-        assert(constraints[curr_cons+i].type == load_cons);
-        assert(constraints[curr_cons+i+1].type == store_cons);
-        
-        u32 next = create_node(true);
-        G[next].r = true;
-        add_edge(n,next); add_edge(next,b);
-        uses[curr_cons+i] = next;
-        defs[curr_cons+i+1] = next;
+    for (u32 i = bs->cons_sz; i < bs->cons_sz; i++) {
+      if (constraints[i].type == ConstraintStore) {
+        num_stores++;
       }
-      
-      n = b;
+    }
+
+    // Step 1.3.
+    //
+    // Process multiple stores. This can be caused by memcpy/memmove.
+    // Create a diamond-shape.
+    if (num_stores > 1) {
+      // Bottom of the diamond.
+      u32 bottom = this->insert_new_node(PNODE);
+
+      for (u32 i = 0; i < num_stores * 2; i += 2) {
+        assert(constraints[bs->cons_sz + i].type == ConstraintLoad);
+        assert(constraints[bs->cons_sz + i + 1].type == ConstraintStore);
+
+        // Create a non-preserving node.
+        u32 next = this->graph->insert_new_node(MNODE);
+        SEGNode *node = this->graph->get_node(next);
+        node.uses_relevant_def = true;
+
+        // And connect it to the graph.
+        this->graph->connect_nodes(bs->position, next);
+        this->graph->connect_nodes(next, bottom);
+
+        this->uses[bs->cons_sz + i] = next;
+        this->defs[bs->cons_sz + i + 1] = next;
+      }
+
+      bs->position = bottom;
       return;
     }
 
+    // Step 1.4.
+    //
+    // Process single stores.
     if (num_stores == 1) {
-      if (!NP(n)) {
-        G[n].np = true;
+      SEGNode *node = this->graph->get_node(bs->position);
+      if (node->pnode) {
+        // If there's a store, it can longer preserve state.
+        node->pnode = false;
       } else {
-        u32 next = create_node(true);
-        add_edge(n,next); n = next;
+        // If it's already non-preserving, add a new mnode
+        // and connect it to the graph.
+        u32 next = this->graph->insert_new_node(MNODE);
+        this->graph->connect_nodes(bs->position, next);
+        bs->position = next;
       }
     }
     
-    // map any loads and stores to the ICFG node
-    //
-    for (u32 i = curr_cons; i < cons_sz; ++i) {
-      Constraint& C = constraints[i];
-      
-      if (C.type == store_cons) {
-        defs[i] = n;
+    // Go through the new constraints.
+    for (u32 i = bs->cons_sz; i < constraints.size(); i++) {
+      Constraint &c = constraints[i];
+
+      if (c.type == ConstraintStore) {
+        this->defs[i] = bs->position;
       }
-      else if (C.type == load_cons)  {
-        G[n].r = true; uses[i] = n;
+      if (c.type == ConstraintLoad) {
+        SEGNode *node = this->graph->get_node(bs->position);
+        node->uses_relevant_def = true;
+        this->uses[i] = bs->position;
       }
     }
 
@@ -119,150 +157,75 @@ static void add_call_edges(llvm::Instruction *inst) {
     return;
   }
 
+  // Is there no value at the called value?
   u32 fp = get_value_node(ci->getCalledValue(), true);
   if (!fp) {
     return;
   }
-  
-  block_call = true;
-  
-  // we can process loads and stores from indirect calls
-  // directly without computing SSA form, since the objects in
-  // question are, by construction, already in SSA form; we
-  // save these constraints to process later
-  //
-  for (u32 i = curr_cons; i < cons_sz; ++i) {
-    idr_cons.push_back(i);
+
+  // Has a call.
+  bs->contains_call = true;
+
+  // Go through the new constraints and save them to process later.
+  for (u32 i = bs->cons_sz; i < constraints.size(); i++) {
+    this->idr_cons.push_back(i);
   }
   
-  // we also save the indirect call inst and current node so
+  // Also save the indirect call inst and current node so
   // we can add the interprocedural control-flow edges later,
-  // as well as process indirect external calls
-  //
-  idr_calls.push_back(make_pair<CallInst*,u32>(ci,n));
+  // as well as process indirect external calls.
+  this->idr_calls.push_back(std::make_pair<llvm::CallInst *, u32>(ci, bs->position));
   
-  // make sure call inst has an associated object node
-  //
-  assert(!get_val_node(ci,true) || get_obj_node(ci));
+  // Ensure the call inst has an associated object node.
+  assert(!get_value_node(ci, true) || get_object_node(ci));
   
-  // guarantee a single successor for the callsite
-  //
-  assert(!call_succ.count(n));
-  u32 next = create_node();
-  call_succ[n] = next;
-  add_edge(n,next); n = next;
+  // Ensure a single successor for the callsite.
+  assert(!this->call_succ.count(bs->position));
+  u32 next = this->insert_new_node(PNODE);
+  this->call_succ[bs->position] = next;
+
+  this->callsite_succ[bs->position] = next;
+  this->connect_nodes(bs->position, next);
+
+  bs->position = next;
+  return;
 }
 
 static void add_load_edges(llvm::Instruction *inst) {
-  G[n].r = true;
+  SEGNode *node = this->get_node(bs->position);
+  node->uses_relevant_def = true;
 
-  // there may have been multiple constraints added, but there
-  // will be exactly one load constraint
-  //
-  for (u32 i = curr_cons; i < cons_sz; ++i) {
-    if (constraints[i].type == load_cons) { uses[i] = n; break; }
-  }
-}
-
-static void add_store_edges(llvm::Instruction *inst) {
-  if (!NP(n)) {
-    G[n].np = true;
-  } else {
-    u32 next = create_node(true);
-    add_edge(n,next); n = next;
-  }
-  
-  // there may have been multiple constraints added, but there
-  // will be exactly one store constraint
-  for (u32 i = curr_cons; i < cons_sz; ++i) {
-    Constraint& C = constraints[i];
-    if (C.type == store_cons) {
-      defs[i] = n;
+  // Go through the new constraints.
+  for (u32 i = bs.cons_sz; i < constraints.size(); i++) {
+    if (constraints[i].type == ConstraintLoad) {
+      this->uses[i] = bs->position;
       break;
     }
   }
 }
 
-enum InstClass {
-  InstClassNone = 0,
-  InstClassCall,
-  InstClassLoad,
-  InstClassStore,
-}
+static void add_store_edges(llvm::Instruction *inst) {
+  SEGNode *node = this->get_node(bs->position);
+  if (node->pnode) {
+    node->pnode = true;
+  } else {
+    u32 next = this->insert_new_node(MNODE);
+    this->connect_nodes(bs->position, next);
+    bs->position = next;
+  }
 
-static ConstraintType Processor::process_instruction(llvm::Instruction *inst) {
-  bool is_pointer = llvm::isa<llvm::PointerType>(inst->getType());
-
-  switch (inst->getOpcode()) {
-  case llvm::Instruction::Ret:
-    assert(!is_pointer);
-    this->process_return(inst);
-    return InstClassNone;
-    
-  case llvm::Instruction::Invoke:
-  case llvm::Instruction::Call:
-    this->process_call(inst);
-    return InstClassCall;
-    
-  case llvm::Instruction::Malloc:
-  case llvm::Instruction::Alloca:
-    assert(is_pointer);
-    this->process_alloc(inst);
-    return InstClassNone;
-
-  case llvm::Instruction::Load:
-    if (is_pointer) {
-      this->process_load(inst);
-      return InstClassLoad;
+  // There may have been multiple constraints added, but there
+  // will be exactly one store constraint
+  for (u32 i = bs->cons_sz; i < constraints.size(); i++) {
+    Constraint &c = constraints[i];
+    if (c.type == ConstraintStore) {
+      this->defs[i] = bs->position;
+      break;
     }
-    return InstClassNone;
-
-  case llvm::Instruction::Store:
-    assert(!is_pointer);
-    this->process_store(inst);
-    return InstClassStore;
-      
-  case llvm::Instruction::GetElementPtr:
-    assert(is_pointer);
-    this->process_gep(inst);
-    return InstClassNone;
-
-  case llvm::Instruction::IntToPtr:
-    assert(is_pointer);
-    this->process_int2ptr(inst);
-    return InstClassNone;
-
-  case llvm::Instruction::BitCast:
-    if (is_pointer) {
-      this->process_bitcast(inst);
-    }
-    return InstClassNone;
-
-  case llvm::Instruction::PHI:
-    if (is_pointer) {
-      this->process_phi(inst);
-    }
-    return InstClassNone;
-
-  case llvm::Instruction::Select:
-    if (is_pointer) {
-      this->process_select(inst);
-    }
-    return InstClassNone;
-
-  case llvm::Instruction::VAArg:
-    if (is_pointer) {
-      this->process_vaarg(inst);
-    }
-    return InstClassNone;
-
-  default:
-    assert(!is_pointer && "unknown instruction has pointer return type");
-    return InstClassNone;      
   }
 }
 
-static void Processor::process_block(u32 parent, llvm::BasicBlock *bb) {
+static void Processor::process_block(SEGIndex parent, llvm::BasicBlock *bb) {
   // Step 1.
   //
   // Process blocks we've seen before.
@@ -292,17 +255,123 @@ static void Processor::process_block(u32 parent, llvm::BasicBlock *bb) {
   //
   // Iterate through instructions, translate them to constraints,
   // and create nodes for them in the graph.
+  BlockState bs(index);
   for (llvm::BasicBlock::iterator i = bb->begin(), i = bb->end();
        i != e; i++) {
     llvm::Instruction *inst = &*i;
-    InstClass inst_class = this->process_instruction(inst);
+    bool is_pointer = llvm::isa<llvm::PointerType>(inst->getType());
+    unsigned opcode = inst->getOpcode();
 
-    if (inst_class == InstClassCall) {
-      n = this->add_call_edges(inst);
-    } else if (inst_class == InstClassLoad) {
-      n = this-{add_load_edges(inst);
-    } else if (inst_class == InstClassStore) {
-      n = this->add_store_edges(inst);
+    bs.constraints_sz = contraints.size();    
+
+    if (opcode == llvm::Instruction::Ret) {
+      assert(!is_pointer);
+      this->process_return(inst);
+
+      if (bs.contains_call) {
+        u32 next = this->graph->insert_new_node(PNODE);
+        this->graph->connect_nodes(bs.position, next);
+        bs.position = next;
+      }
+      
+      assert(!this->func_ret_nodes.count(bb->getParent()));
+      this->func_ret_nodes[bb->getParent()] = bs.position;
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::Malloc ||
+        llvm::Instruction::Alloca) {
+      assert(is_pointer);
+      this->process_alloc(inst);
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::GetElementPtr) {
+      assert(is_pointer);
+      this->process_gep(inst);
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::IntToPtr) {
+      assert(is_pointer);
+      this->process_int2ptr(inst);
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::BitCast) {
+      if (is_pointer) {
+        this->process_bitcast(inst);
+      }
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::PHI) {
+      if (is_pointer) {
+        this->process_phi(inst);
+      }
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::Select) {
+      if (is_pointer) {
+        this->process_select(inst);
+      }
+
+      continue;
+    }
+    if (opcode == llvm::Instruction::VAArg) {
+      if (is_pointer) {
+        this->process_vaarg(inst);
+      }
+
+      continue;
+    }
+    
+    bool call = false;
+    if (opcode == llvm::Instruction::Invoke ||
+        llvm::Instruction::Call) {      
+      this->process_call(inst);
+      call = true;
+    }
+
+    bool load = false;
+    if (opcode == llvm::Instruction::Load) {
+      if (is_pointer) {
+        this->process_load(inst);
+        load = true;
+      }
+    }
+
+    bool store = false;
+    if (opcode == llvm::Instruction::Store) {
+      assert(!is_pointer);
+      this->process_store(inst);
+      store = true;
+    }
+
+    if (!call && !load && !store) {
+      assert(!is_pointer && "unknown instruction has pointer type");
+    }    
+
+    int constraints_diff = constraints.size() - bs.constraints_sz;
+    if (!constraints_diff && !call) {
+      continue;
+    }
+
+    this->defs.insert(this->defs.end(), constraints_diff, 0);
+    assert(this->defs.size() == constraints.size());
+
+    this->uses.insert(this->uses.end(), constraints_diff, 0);
+    assert(this->uses.size() == constraints.size());
+
+    if (call) {
+      add_call_edges(&bs, inst);
+    }
+    if (load) {
+      add_load_edges(&bs, inst);      
+    }
+    if (store) {
+      add_store_edges(&bs, inst);
     }
   }
 
@@ -311,7 +380,7 @@ static void Processor::process_block(u32 parent, llvm::BasicBlock *bb) {
   // Recurse into the successors of this block.
   for (llvm::succ_iterator i = llvm::succ_begin(bb), i = llvm::succ_end(bb);
        i != e; i++) {
-    this->process_block(n, *i);
+    this->process_block(bs.position, *i);
   }   
 }
 

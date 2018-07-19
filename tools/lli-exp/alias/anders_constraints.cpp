@@ -383,6 +383,13 @@ static bool is_address_taken(Value *v) const {
 // * The list of value nodes for constant GEP expr.
 // ext_info:
 // * Info about external functions.
+// icall_cons:
+// * The load/store constraints representing an indirect call's
+//   return and args are mapped to the instruction of that call.
+//   Because constraints referring to different calls may be merged,
+//   1 cons. may map to several calls.
+// ind_calls:
+// * The function pointer nodes used for indirect calls
 u32 next_node;
 std::vector<Node *> nodes;
 llvm::DenseMap<llvm::Value*, u32> value_nodes, object_nodes;
@@ -390,6 +397,8 @@ llvm::DenseMap<llvm::Function*, u32> ret_nodes, vararg_nodes;
 llvm::DenseSet<llvm::Value*> at_args;
 std::vector<u32> gep_ce_nodes;
 ExtInfo *ext_info;
+std::set<u32> ind_calls;
+llvm::DenseMap<Constraint, std::set<llvm::Instruction *> > icall_cons;
 
 static u32 find_value_node(llvm::Value *v, bool allow_null = false) const {
 }
@@ -868,4 +877,113 @@ AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionItera
   //
   // Make sure that the nodes were processed.
   assert(next_node == nodes.size());
+}
+
+static void sanity_check() {
+  for (int i = 0; i < nodes.size(); i++) {
+    const Node *node = nodes[i];
+    if (!node->val) {
+      assert(!node->obj_sz || i == UnknownTarget && "artificial node has an obj_sz");
+      continue;
+    }
+
+    u32 value_node = get_value_node(node->val, 1);
+    u32 object_node = get_object_node(node->val, 1);
+    u32 ret_node = 0, vararg_node = 0;
+
+    if (llvm::Function *f = llvm::dyn_cast<llvm::Function>(node->val)) {
+    }
+
+  }
+}
+
+void move_addr_taken_nodes() {
+  std::vector<Node *> old_nodes;
+  old_nodes.swap(nodes);
+
+  u32 old_nodes_sz = old_nodes.size();
+  nodes.resize(old_nodes_sz);
+
+  u32 *tmp = (u32 *) malloc(old_nodes_sz * 4);
+
+  // Keep placeholder nodes at the front.
+  for (u32 i = 0; i < First; i++) {
+    nodes[i] = old_nodes[i];
+    tmp[i] = i;
+  }
+
+  // First copy all address taken nodes.
+  u32 node_counter = First;
+  for (u32 i = First; i < old_nodes_sz; i++) {
+    bool addr_taken = old_nodes[i]->obj_sz > 0;
+    if (addr_taken) {
+      nodes[node_counter] = old_nodes[i];
+      tmp[i] = node_counter++;
+    }
+  }
+  u32 last_object_node = node_counter - 1;
+
+  // Then copy all of the others.
+  for (u32 i = first_var_node; i < old_nodes_sz; i++) {
+    bool addr_taken = old_nodes[i]->obj_sz > 0;
+    if (!addr_taken) {
+      nodes[node_counter] = old_nodes[i];
+      tmp[i] = node_counter++;
+    }
+  }
+
+  // Re-number the nodes in all constraints.
+  for (int i = 0; i < constraints.size(); i++) {
+    Constraint &c = constraints[i];
+    c.dest = tmp[c.dest];
+    c.src = tmp[c.src];
+    assert(c.type != ConstraintAddrOf || c.src <= last_object_node);
+  }
+  
+  // Re-number the nodes in all value-node maps.
+  for (llvm::DenseMap<llvm::Value*, u32>::iterator i = value_nodes.begin(),
+        e= value_nodes.end(); i != e; ++i) {
+    i->second = tmp[i->second];
+  }
+  for (llvm::DenseMap<llvm::Value*, u32>::iterator i = object_nodes.begin(),
+        e = object_nodes.end(); i != e; ++i) {
+    i->second = tmp[i->second];
+  }
+  for (llvm::DenseMap<llvm::Function*, u32>::iterator i = ret_nodes.begin(),
+        e = ret_nodes.end(); i != e; ++i) {
+    i->second = tmp[i->second];
+  }
+  for (llvm::DenseMap<llvm::Function*, u32>::iterator i = vararg_nodes.begin(),
+        e = vararg_nodes.end(); i != e; ++i) {
+    i->second = tmp[i->second];
+  }
+  
+  // Re-number the nodes in ind_calls.
+  std::set<u32> old_ind_calls;
+  old_ind_calls.swap(ind_calls);
+  for (std::set<u32>::iterator i = old_ind_calls.begin(), e = old_ind_calls.end();
+       i != e; ++i) {
+    ind_calls.insert(tmp[*i]);
+  }
+  
+  // Re-number the nodes in icall_cons.
+  std::vector<std::pair<Constraint, std::set<llvm::Instruction*> > > old_icall_cons;
+  for(llvm::DenseMap<Constraint, std::set<llvm::Instruction*> >::iterator
+        i = icall_cons.begin(), e= icall_cons.end(); i != e; ++i) {    
+    old_icall_cons.push_back(*i);
+  }
+  icall_cons.clear();  
+
+  for (int i = 0; i < old_icall_cons.size(); i++) {
+    Constraint &c = old_icall_cons[i].first;
+    c.dest = tmp[c.dest];
+    c.src = tmp[c.src];
+    icall_cons[c] = old_icall_cons[i].second;
+  }
+  
+  // Free the temporary structure.
+  free(tmp);
+
+  // Check that the nodes are sane.
+  sanity_check();
 }

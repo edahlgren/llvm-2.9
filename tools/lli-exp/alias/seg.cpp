@@ -28,7 +28,7 @@ SEG *build_constraint_based_seg(llvm::Module *m, u64 max_size = 1000000000) {
 
   // Walk the module to process its instructions, filling in the graph and
   // collecting constraints.
-  AndersConstraints *cs = build_anders_constraints(m, graph);
+  AndersConstraints *cs = build_constraints(m, graph);
 
   // Reduce the graph to make it more sparse.
   graph->reduce();
