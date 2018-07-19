@@ -23,13 +23,34 @@ void SEG::reduce() {
 }
 
 SEG *build_constraint_based_seg(llvm::Module *m, u64 max_size = 1000000000) {
-  // Make a new sparse evaluation graph.
+  // Step 1.
+  //
+  // Initialize a new evaluation graph and a processor wrapper that
+  // will hold def-use information.
   SEG *graph = new SEG(max_size);
+  Processor *proc = new Processor(graph);
 
-  // Walk the module to process its instructions, filling in the graph and
-  // collecting constraints.
-  AndersConstraints *cs = build_constraints(m, graph);
+  // Step 2.
+  //
+  // Walk the module to find constraints and fill in def-use information.
+  Constraints *cs = build_constraints(m, proc);
 
+  // Step 3.
+  //
+  // Optimize the constraints so that they'll be easier to solve for.
+  cs->optimize();
+
+  // ??
+  graph->make_interprocedural(m);
+  
+  // Step 4.
+  //
+  // Solve the constraints.
+  cs->solve();
+
+  
+  
+  
   // Reduce the graph to make it more sparse.
   graph->reduce();
 

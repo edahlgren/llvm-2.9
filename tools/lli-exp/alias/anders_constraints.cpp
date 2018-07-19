@@ -95,6 +95,8 @@ enum SpecialNodes {
   FirstNode,            // first node representing a real variable
 };
 
+const u32 node_rank_min= 0xf0000000;
+
 class Node {
 public:
   // The LLVM value represented by this node, or 0 for artificial nodes
@@ -426,6 +428,89 @@ static void add_double_object_node(llvm::Value *v) {
 
   add_constraint(ConstraintAddrOf, value_node, object_node);
   add_constraint(ConstraintAddrOf, object_node, object_node + 1);
+}
+
+// This awkwardly depends on Anders::const_opt being run. Ugh.
+static u32 merge_nodes(u32 a, u32 a) {
+  // Step 1.
+  //
+  // Perform a sanity check on the node indices first.
+  assert(a && a < nodes.size());
+  assert(b && b < nodes.size());
+  assert(a != b);
+  assert(a != UnknownTarget);
+  assert(b != UnknownTarget);
+
+  // Step 2.
+  //
+  // Check that these nodes represent themselves.
+  Node *n1 = nodes[a];
+  Node *n2 = nodes[b];
+  assert(n1->rep >= node_rank_min);
+  assert(n2->rep >= node_rank_min);
+
+  // Step 3.
+  //
+  // Make n1 the parent.
+  if (n1->rep < n2->rep) {
+    std::swap(a, b);
+    std::swap(n1, n2);
+  } else if (n1->rep == n2->rep) {
+    n1->rep++;
+  }
+  n2->rep = n1;
+
+  // Step 4.
+  //
+  // If n2 was not visited in a long time, then the combined
+  // node should be visited sooner.
+  if (n1->vtime > n2->vtime) {
+    n1->vtime = n2->vtime;
+  }
+
+  // Step 5.
+  //
+  // Move n2's edges and constraints into n1.
+  n1->points_to |= n2->points_to;
+  n1->copy_to |= n2->copy_to;
+  if (n1->copy_to.test(n1)) {
+    n1->copy_to.reset(n1);
+  }
+  if (n1->copy_to.test(n2)) {
+    n1->copy_to.reset(n2);
+  }
+  n1->load_to |= n2->load_to;
+  n1->store_from |= n2->store_from;
+  n1->gep_to |= n2->gep_to;
+  n1->prev_points_to = bddfalse; /* special */
+
+  // Step 6.
+  //
+  // Delete n2's edges and constraints.
+  n2->points_to = bddfalse;
+  n2->copy_to.clear();
+  n2->load_to.clear();
+  n2->store_from.clear();
+  n2->gep_to.clear();
+  n2->prev_points_to = bddfalse;
+
+  // Step 7.
+  //
+  // Convert n1 to be an indirect call target if n2 was.
+  if (ind_calls.count(n2)) {
+    ind_calls.erase(n2);
+    ind_calls.insert(n1);
+  }
+
+  // Step 8.
+  //
+  // Convert n1 to be a non-pointer if n2 was a non-pointer.
+  n1->nonptr &= n2->nonptr;
+
+  // Step 9.
+  //
+  //
+  llvm::DenseMap<u32, u32>::iterator ihv
 }
 
 //The offsets from a function's obj node to the return value and first arg.
@@ -791,7 +876,119 @@ static void initialize_global(u32 object_node, llvm::Constant *c, bool first = f
   return off;
 }
 
-AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionIterator *fi) {
+static void sanity_check() {
+  // Iterate through all of the nodes.
+  for (int i = 0; i < nodes.size(); i++) {
+    // Step 1.
+    //
+    // Check that nodes with real values always have a size > 0.
+    const Node *node = nodes[i];
+    if (!node->val) {
+      assert(!node->obj_sz || i == UnknownTarget);
+      continue;
+    }
+
+    u32 value_node = get_value_node(node->val, 1);
+    u32 object_node = get_object_node(node->val, 1);
+    u32 ret_node = 0, vararg_node = 0;
+
+    // Step 2.
+    //
+    // Figure out what short of value the node has.
+    if (llvm::Function *f = llvm::dyn_cast<llvm::Function>(node->val)) {
+      llvm::DenseMap<llvm::Function *, u32>::iterator j = ret_nodes.find(f);
+      if (j != ret_nodes.end()) {
+        ret_node = j->second;
+      }
+
+      j = vararg_nodes.find(f);
+      if (j != vararg_nodes.end()) {
+        vararg_node = j->second;
+      }
+    }
+
+    // Step 3.
+    //
+    // If the node isn't an object node, check that it doesn't have
+    // an object size or that it's a special type (at_args).
+    bool value_or_object = false;
+    if (i == value_node ||
+        i == ret_node ||
+        i == vararg_node) {
+      assert(!node->obj_sz || at_args.count(node->val));
+      value_or_object = true;
+    }
+
+    // Step 4.
+    //
+    // If the node is an object node, the check that it's within
+    // the object of its value.
+    if (i < object_node + nodes[object_node]->obj_siz) {
+      u32 object_offset = node->obj_sz + 1;
+      u32 object_upper_bound = object_node + nodes[object_nodes]->obj_sz;
+      assert(node->obj_sz && object_offset <= object_upper_bound);
+      value_or_object = true;
+    }
+
+    // Step 5.
+    //
+    // Check that we did Step 3 or Step 4. If we didn't, then the
+    // node isn't findable.
+    assert(value_or_object);
+
+    // Step 6.
+    //
+    // Check that the value map points to right objects in
+    // the node set.
+    for (llvm::DenseMap<llvm::Value *, u32>::iterator i = value_nodes.begin(),
+           e = value_nodes.end(); i != e; i++) {
+      llvm::Value *v = i->first;
+      u32 node_id = i->second;
+
+      // Skip the args of an addr-taken function, they're are mapped
+      // to the obj_nodes instead.
+      if (at_args.count(v)) {
+        continue;
+      }      
+      assert(v == nodes[node_id]->val);
+    }
+
+    // Step 7.
+    //
+    // Check that the object map points to the right objects in
+    // the node set.
+    for (llvm::DenseMap<llvm::Value *, u32>::iterator i = object_nodes.begin(),
+           e = object_nodes.end(); i != e; i++) {
+      llvm::Value *v = i->first;
+      u32 node_id = i->second;
+      assert(v == nodes[node_id]->val);
+    }
+
+    // Step 8.
+    //
+    // Check that the return map points to the right objects in
+    // the node set.
+    for (llvm::DenseMap<llvm::Function *, u32>::iterator i = ret_nodes.begin(),
+           e = ret_nodes.end(); i != e; i++) {
+      llvm::Function *f = i->first;
+      u32 node_id = i->second;
+      assert(f == nodes[node_id]->val);
+    }
+
+    // Step 9.
+    //
+    // Check that the vararg map points to the right objects in
+    // the nodes set.
+    for (llvm::DenseMap<llvm::Function *, u32>::iterator i = vararg_nodes.begin(),
+           e = vararg_nodes.end(); i != e; i++) {
+      llvm::Function *f = i->first;
+      u32 node_id = i->second;
+      assert(f == nodes[node_id]->val);
+    }
+  }
+}
+
+Constraints *build_anders_constraints(llvm::Module *m, const Processor *proc) {
   // Step 1.
   //
   // Add the placeholder nodes (the ones that come before the first
@@ -869,7 +1066,7 @@ AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionItera
   // Visit the instructions in each function and process them.
   for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
     if (!ext_info->is_ext(i)) {
-      fi->process_function(i);
+      proc->process_function(i);
     }
   }
 
@@ -877,113 +1074,12 @@ AndersConstraints *build_anders_constraints(llvm::Module *m, const FunctionItera
   //
   // Make sure that the nodes were processed.
   assert(next_node == nodes.size());
-}
 
-static void sanity_check() {
-  for (int i = 0; i < nodes.size(); i++) {
-    const Node *node = nodes[i];
-    if (!node->val) {
-      assert(!node->obj_sz || i == UnknownTarget && "artificial node has an obj_sz");
-      continue;
-    }
-
-    u32 value_node = get_value_node(node->val, 1);
-    u32 object_node = get_object_node(node->val, 1);
-    u32 ret_node = 0, vararg_node = 0;
-
-    if (llvm::Function *f = llvm::dyn_cast<llvm::Function>(node->val)) {
-    }
-
-  }
-}
-
-void move_addr_taken_nodes() {
-  std::vector<Node *> old_nodes;
-  old_nodes.swap(nodes);
-
-  u32 old_nodes_sz = old_nodes.size();
-  nodes.resize(old_nodes_sz);
-
-  u32 *tmp = (u32 *) malloc(old_nodes_sz * 4);
-
-  // Keep placeholder nodes at the front.
-  for (u32 i = 0; i < First; i++) {
-    nodes[i] = old_nodes[i];
-    tmp[i] = i;
-  }
-
-  // First copy all address taken nodes.
-  u32 node_counter = First;
-  for (u32 i = First; i < old_nodes_sz; i++) {
-    bool addr_taken = old_nodes[i]->obj_sz > 0;
-    if (addr_taken) {
-      nodes[node_counter] = old_nodes[i];
-      tmp[i] = node_counter++;
-    }
-  }
-  u32 last_object_node = node_counter - 1;
-
-  // Then copy all of the others.
-  for (u32 i = first_var_node; i < old_nodes_sz; i++) {
-    bool addr_taken = old_nodes[i]->obj_sz > 0;
-    if (!addr_taken) {
-      nodes[node_counter] = old_nodes[i];
-      tmp[i] = node_counter++;
-    }
-  }
-
-  // Re-number the nodes in all constraints.
-  for (int i = 0; i < constraints.size(); i++) {
-    Constraint &c = constraints[i];
-    c.dest = tmp[c.dest];
-    c.src = tmp[c.src];
-    assert(c.type != ConstraintAddrOf || c.src <= last_object_node);
-  }
-  
-  // Re-number the nodes in all value-node maps.
-  for (llvm::DenseMap<llvm::Value*, u32>::iterator i = value_nodes.begin(),
-        e= value_nodes.end(); i != e; ++i) {
-    i->second = tmp[i->second];
-  }
-  for (llvm::DenseMap<llvm::Value*, u32>::iterator i = object_nodes.begin(),
-        e = object_nodes.end(); i != e; ++i) {
-    i->second = tmp[i->second];
-  }
-  for (llvm::DenseMap<llvm::Function*, u32>::iterator i = ret_nodes.begin(),
-        e = ret_nodes.end(); i != e; ++i) {
-    i->second = tmp[i->second];
-  }
-  for (llvm::DenseMap<llvm::Function*, u32>::iterator i = vararg_nodes.begin(),
-        e = vararg_nodes.end(); i != e; ++i) {
-    i->second = tmp[i->second];
-  }
-  
-  // Re-number the nodes in ind_calls.
-  std::set<u32> old_ind_calls;
-  old_ind_calls.swap(ind_calls);
-  for (std::set<u32>::iterator i = old_ind_calls.begin(), e = old_ind_calls.end();
-       i != e; ++i) {
-    ind_calls.insert(tmp[*i]);
-  }
-  
-  // Re-number the nodes in icall_cons.
-  std::vector<std::pair<Constraint, std::set<llvm::Instruction*> > > old_icall_cons;
-  for(llvm::DenseMap<Constraint, std::set<llvm::Instruction*> >::iterator
-        i = icall_cons.begin(), e= icall_cons.end(); i != e; ++i) {    
-    old_icall_cons.push_back(*i);
-  }
-  icall_cons.clear();  
-
-  for (int i = 0; i < old_icall_cons.size(); i++) {
-    Constraint &c = old_icall_cons[i].first;
-    c.dest = tmp[c.dest];
-    c.src = tmp[c.src];
-    icall_cons[c] = old_icall_cons[i].second;
-  }
-  
-  // Free the temporary structure.
-  free(tmp);
-
-  // Check that the nodes are sane.
-  sanity_check();
+  // Step 9.
+  //
+  // Free temporary structures.
+  struct_info_map.clear();
+  gep_ce_nodes.clear();
+  globals_initialized.clear(); 
+  at_args.clear();
 }

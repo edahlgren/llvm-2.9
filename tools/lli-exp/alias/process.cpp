@@ -17,6 +17,8 @@ public:
   std::map<u32, u32> callsite_succ; // callsite -> local successor
   std::vector<u32> idr_cons; // indices of constraints from idr calls
   std::vector<std::pair<llvm::CallInst *, u32> > idr_calls; // <idr call, callsite> pairs
+
+  Processor(SEG *graph) : graph(graph) {}
 };
 
 static llvm::Function* calledFunction(llvm::CallInst *ci) {
