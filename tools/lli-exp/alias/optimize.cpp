@@ -1,35 +1,3 @@
-class OfflineNode {
-  bool del;
-  u32 dfs_num;
-  u32 rep;
-
-  bool indirect;
-  bitmap edges, labels;
-
-  OfflineNode() :
-    del(false),
-    rep(MAX_U32),
-    dfs_num(0),
-    idr(false) {}
-};
-
-typedef std::hash_map<std::pair<u32, u32>, u32>::const_iterator gep_label_iterator;
-
-class OfflineGraph {
-  std::vector<OfflineNode> nodes;
-  std::vector<u32> main_offset;
-  u32 next_label;
-  u32 dfs_num;
-  std::stack<u32> node_stack;
-  
-  std::hash_map<std::pair<u32, u32>, u32> gep_labels;
-
-  OfflineGraph(size) :
-    next_label(1), dfs_num(1) {
-    nodes.assign(size, OfflineNode());
-  }
-};
-
 // Shift nodes that have their address taken to the front of the nodes set,
 // which clumps them closely together. This is an optimization.
 static u32 move_addr_taken_nodes() {

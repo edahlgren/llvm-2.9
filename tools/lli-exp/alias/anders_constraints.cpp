@@ -540,7 +540,7 @@ static void sanity_check() {
   }
 }
 
-Constraints *build_anders_constraints(llvm::Module *m, const Processor *proc) {
+Constraints *build_constraints(llvm::Module *m, const Processor *proc) {
   // Step 1.
   //
   // Add the placeholder nodes (the ones that come before the first
@@ -616,22 +616,14 @@ Constraints *build_anders_constraints(llvm::Module *m, const Processor *proc) {
   // Step 7.
   //
   // Visit the instructions in each function and process them.
-  for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
-    if (!ext_info->is_ext(i)) {
-      proc->process_function(i);
-    }
-  }
+  //for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
+  //  if (!ext_info->is_ext(i)) {
+  //    proc->process_function(i);
+  //  }
+  //}
 
   // Step 8.
   //
   // Make sure that the nodes were processed.
   assert(next_node == nodes.size());
-
-  // Step 9.
-  //
-  // Free temporary structures.
-  struct_info_map.clear();
-  gep_ce_nodes.clear();
-  globals_initialized.clear(); 
-  at_args.clear();
 }

@@ -1,36 +1,10 @@
-class HVN {
-  OfflineGraph *graph;
-  u32 next_ptr_eq;
-  u32 curr_dfs;
-  std::stack<u32> dfs_stack;
-  bool do_union;
-  
-  HVN(bool do_union, u32 last_object_node) : do_union(do_union) : curr_dfs(1) {
-    graph = make_offline_graph_1(last_object_node);
-    next_ptr_eq = nodes.size();
-  }
-};
 
-void HVN::run() {
-  hvn_add_constraint_edges(this->graph);
-
-  for (u32 i = this->graph->firstAFP; i < this->graph->firstREF; i++) {
-    if (!graph->nodes[i].dfs_num) {
-      this->dfs(i);
-    }
-  }
-
-  assert(this->dfs_stack.empty());
-
-  this->merge_equal_pointers();
-}
-
-void HVN::add_constraint_edges() {
+void HVN::add_constraint_edges(AnalysisSet *as) {
   u32 num_copy = 0, num_load = 0, num_store = 0;
   u32 num_impl_addr = 0, n_impl_copy = 0;
 
-  for (int i = 0; i < constraints.size(); i++) {
-    const Constraint &c = constraints[i];
+  for (int i = 0; i < as->constraints.size(); i++) {
+    const Constraint &c = as->constraints[i];
 
     assert(nodes[c.dest]->is_rep());
     assert(nodes[c.src]->is_rep());

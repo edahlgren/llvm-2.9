@@ -8,7 +8,7 @@ bool SEG::node_survives_reduction(SEGNode *node) {
 // This reduces the graph to make it "more sparse". It works by applying
 // several well-known transformations and obeying the graph's predicate
 // node_survives_reduction for each node that could be reduced.
-void SEG::reduce() {
+void SEG::do_reduction() {
   T4 t4(this);
   t4.run();
 
