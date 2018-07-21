@@ -612,18 +612,4 @@ Constraints *build_constraints(llvm::Module *m, const Processor *proc) {
     u32 value_node_expr = gep_ce_nodes[i];
     initialize_gep(value_node_expr);
   }
-
-  // Step 7.
-  //
-  // Visit the instructions in each function and process them.
-  //for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
-  //  if (!ext_info->is_ext(i)) {
-  //    proc->process_function(i);
-  //  }
-  //}
-
-  // Step 8.
-  //
-  // Make sure that the nodes were processed.
-  assert(next_node == nodes.size());
 }

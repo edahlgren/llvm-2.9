@@ -18,7 +18,7 @@ AnalysisResult *run_analysis(llvm::Module *m) {
 
 
   {
-    HVN hvn(as);
+    HVN hvn(as, last_object_node);
     hvn.run();
   }
 

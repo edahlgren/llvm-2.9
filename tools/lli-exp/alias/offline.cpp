@@ -1,37 +1,36 @@
-void OfflineGraph::merge(u32 a, u32 b) {
-  assert(n1 && n1 < off_nodes.size() && "invalid node 1");
-  assert(n2 && n2 < off_nodes.size() && "invalid node 2");
-  assert(n1 != n2 && "trying to merge a node with itself");
-  OffNode *N1= &off_nodes[n1], *N2= &off_nodes[n2];
-  assert(N1->dfs_id && N2->dfs_id && "trying to merge unvisited nodes");
-  u32 rank1= N1->rep, rank2= N2->rep;
-  assert(rank1 >= node_rank_min && rank2 >= node_rank_min &&
-      "only rep nodes may be merged");
-  //Make n1 the parent.
-  if(rank1 < rank2){
-    swap(n1, n2);
-    swap(N1, N2);
-  }else if(rank1 == rank2){
-    ++N1->rep;
-  }
-  N2->rep= n1;
-  DEBUG(fprintf(stderr, "    merge %u <= %u\n", n1, n2));
+u32 OfflineGraph::merge(u32 a, u32 b) {
+  assert(a && a < this->nodes.size() && "invalid node 1");
+  assert(b && b < this->nodes.size() && "invalid node 2");
+  assert(a != b && "trying to merge a node with itself");
 
-  //Move n2's edges and labels into n1. In HVN mode, if both nodes were
-  //  pre-labeled, n1 may have >1 label, but hvn_label() will be called
-  //  on n1 as soon as the SCC is collapsed, so it will have only 1 label
-  //  after hvn_dfs() returns.
-  N1->edges |= N2->edges;
-  N1->impl_edges |= N2->impl_edges;
-  N1->ptr_eq |= N2->ptr_eq;
-  N2->edges.clear();
-  N2->impl_edges.clear();
-  N2->ptr_eq.clear();
-  //The entire SCC should be indirect if any node in it is.
-  N1->indirect |= N2->indirect;
-  //If either node was pre-labeled, the merged node should get the same label.
-  N1->ptr_eq |= N2->ptr_eq;
-  return n1;
+  OfflineNode *n1 = &this->nodes[a];
+  OfflineNode *n2 = &this->nodes[b];
+  assert(n1->dfs_num && n2->dfs_num && "trying to merge unvisited nodes");
+
+  u32 r1 = n1->rep, r2 = n2->rep;
+  assert(r1 >= NODE_RANK_MIN && r2 >= NODE_RANK_MIN && "only rep nodes can be merged");
+
+  // Make n1 the parent of n2. 
+  if (r1 < r2) {
+    std::swap(a, b);
+    std::swap(n1, n2);
+  }
+  if (r1 == r2) {
+    ++n1->rep;
+  }
+  n2->rep = n1;
+
+  // Move n2's edges and labels into n1.
+  n1->edges |= n2->edges;
+  n1->impl_edges |= n2->impl_edges;
+  n1->ptr_eq |= n2->ptr_eq;
+  n1->indirect |= n2->indirect;
+  
+  n2->edges.clear();
+  n2->impl_edges.clear();
+  n2->ptr_eq.clear();
+  
+  return a;
 }
 
 static void add_constraint_edges(HVN *hvn) {
@@ -125,7 +124,7 @@ static void add_constraint_edges(HVN *hvn) {
       if (iter != og->gep_label.end()) {
         pe = iter->second;
       } else {
-        og->gep_labels[r] = pe = og->next_ptr_eq++;
+        og->gep_labels[r] = pe = og->next_label++;
       }
 
       OfflineNode &dest_node = og->nodes[dest];
@@ -139,48 +138,53 @@ static void add_constraint_edges(HVN *hvn) {
 }
 
 static void label_node_at(HVN *hvn, u32 index) {
-  OffNode *N= &off_nodes[n];
-  bitmap &pe= N->ptr_eq;
-  assert(N->is_rep() && N->scc_root);
-  //All indirect nodes get new labels.
-  if(N->indirect){
-    //Remove pre-labeling, in case a direct pre-labeled node was
-    //  merged with an indirect one.
+  OfflineGraph *og = hvn->offline_graph;
+  OfflineNode *node = &og->nodes[index];
+  assert(node->is_rep() && node->scc_root);
+  
+  bitmap &pe = node->ptr_eq;
+  if (node->indirect) {
+    // Give indirect nodes new labels.
     pe.clear();
-    pe.set(next_ptr_eq++);
+    pe.set(og->next_label++);
     return;
   }
-  //Collect all incoming labels into the current node.
-  for(bitmap::iterator it= N->edges.begin(), ie= N->edges.end();
-      it != ie; ++it){
-    u32 n2= get_off_rep(*it);
-    if(n2 == n){
+
+  for (bitmap::iterator i = node->edges.begin(), e = node->edges.end();
+       i != e; i++) {
+    u32 rep_index = og->rep(*i);
+    if (rep_index == index) {
       continue;
     }
-    bitmap &pe2= off_nodes[n2].ptr_eq;
-    assert(!pe2.empty() && "unlabeled neighbor");
-    //Ignore non-ptr neighbors.
-    if(!pe2.test(0)){
-      pe |= pe2;
+
+    bitmap &pe_rep = og->nodes[rep_index].ptr_eq;
+    assert(!pe_rep.empty(), "unlabeled neighbor");
+
+    // Ignore non-ptr neighbors.
+    if (!pe_rep.test(0)) {
+      pe |= pe_rep;
     }
   }
-  //If a direct node has no incoming labels, it's a non-pointer.
-  if(pe.empty()){
+
+  if (pe.empty()) {
+    // If a direct node has no incoming labels, it's a non-pointer.
     pe.set(0);
-  //If there was >1 incoming label, replace the set by its ID.
-  }else if(!pe.single_bit_p()){
-    hash_map<bitmap, u32>::const_iterator i_l2p= lbl2pe.find(pe);
-    if(i_l2p == lbl2pe.end()){
-      lbl2pe[pe]= next_ptr_eq;
+  } else if (!pe.single_bit_p()) {
+    std::hash_map<bitmap, u32>::const_iterator i =
+      og->label_to_ptr.find(pe);
+
+    if (i == og->label_to_ptr.end()) {
+      og->label_to_ptr[pe] = og->next_label;
       pe.clear();
-      pe.set(next_ptr_eq++);
-    }else{
+      pe.set(og->next_label++);
+    } else {
       pe.clear();
-      pe.set(i_l2p->second);
-    }
+      pe.set(i->second);
+    }    
   }
+
   //If there was only 1, keep it.
-  assert(N->ptr_eq.single_bit_p());  
+  assert(node->ptr_eq.single_bit_p());
 }
 
 void check_edge(HVN *hvn, u32 index, u32 dest);
@@ -234,167 +238,215 @@ static void do_dfs_at(HVN *hvn, u32 index) {
 
   // Label it as such.
   assert(node->is_rep());
-  node->scc_root = true;
-  
+  node->scc_root = true;  
   label_node_at(hvn, index);    
 }
 
 void check_edge(HVN *hvn, u32 index, u32 dest) {
-  OffNode *N= &off_nodes[n];
-  assert(N->is_rep());
-  //dest comes from a bitmap entry, so it may be out of date.
-  u32 n2= get_off_rep(dest);
-  const OffNode *N2= &off_nodes[n2];
-  //Skip this neighbor if it was merged into N or is a collapsed SCC.
-  if(n2 == n || N2->scc_root){
+  OfflineNode *node = hvn->offline_graph->nodes[index];
+  assert(node->is_rep());
+
+  u32 rep_index = hvn->offline_graph->rep(index);
+  const OfflineNode *rep_node = &hvn->offline_graph->nodes[rep_index];
+  if (rep_node == node || rep_node->scc_root) {
+    // Skip this if it was merged into the node or is a collapsed scc.    
     return;
   }
-  //If it's unvisited, continue the DFS.
-  if(!N2->dfs_id){
-    hvn_dfs(n2, do_union);
+  
+  if (!rep_node->dfs_num) {
+    // If it's unvisited, continue with the dfs.
+    do_dfs_at(hvn, rep_node);
   }
-  //Set our dfs_id to the minimum reachable ID.
-  if(N2->dfs_id < N->dfs_id){
-    N->dfs_id= N2->dfs_id;
+  
+  if (rep_node->dfs_num < node->dfs_num) {
+    // Set our dfs_num to the minimum reachable number.
+    node->dfs_num = rep_node->dfs_num;
   }
-  assert(N->is_rep());
+
+  // Check that we still represent ourselves.
+  assert(node->rep());
 }
 
 static void merge_all_equal_pointers(HVN *hvn) {
-  u32 nn= nodes.size();
-  //The first node (of the main graph) with the given ptr_eq.
-  hash_map<bitmap, u32> pe2node;
-  FORN(i, nn){
-    u32 on= main2off[i];
-    //If this node has no offline version, it's not pointer-equivalent.
-    if(!on){
+  OfflineGraph *og = hvn->offline_graph;
+  std::vector<Node *> &nodes  = hvn->as->nodes->nodes;
+
+  // Step 1.
+  //
+  //
+  u32 num_nodes = nodes.size();
+  std::hash_map>bitmap, u32> ptr_to_node;
+  
+  for (int i = 0; i < num_nodes; i++) {
+    u32 offset = hvn->offline_graph->offsets[i];
+    if (!offset) {
+      // If this node has no offline version, it's not pointer
+      // equivalent.
       continue;
     }
-    bitmap &pe= off_nodes[get_off_rep(on)].ptr_eq;
+
+    bitmap &pe = og->nodes[og->rep(offset)].ptr_eq;
     assert(!pe.empty());
-    //Non-ptr nodes should be deleted from the constraints.
-    if(pe.test(0)){
+
+    if (pe.test(0)) {
+      // Delete non-pointer nodes from the constraints.
       assert(pe.single_bit_p());
-      nodes[i]->nonptr= 1;
+      nodes[i]->nonptr = true;
       continue;
     }
-    //Anything previously marked as non-ptr cannot have another label.
+
+    // Make sure that anything previously marked as non-pointer
+    // doesn't have another label.
     assert(!nodes[i]->nonptr);
-    hash_map<bitmap, u32>::iterator i_p2n= pe2node.find(pe);
-    if(i_p2n == pe2node.end()){
-      //This PE was not seen yet, so (i) is its first node.
+
+    std::hash_map<bitmap, u32>::iterator iter = ptr_to_node.find(pe);
+    if (iter == ptr_to_node.end()) {
+      // Not seen, so i is its first node.
+      ptr_to_node[pe] = i;
       assert(nodes[i]->is_rep());
-      pe2node[pe]= i;
-    }else{
-      u32 en= i_p2n->second;
-      //Merge (i) into the node representing (pe).
-      INC_STAT(hvn_merge);
-      i_p2n->second= merge_nodes(en, i);
+      continue;
+    }
+
+    // Merge i into the node representing pe.
+    iter->second = hvn->as->nodes->merge(iter->second, i);
+  }
+
+  // Step 2.
+  //
+  //
+  std::vector<Constraint> old;
+  old.swap(constraints);
+
+  llvm::DenseSet<Constraint> seen;
+  for (int i = 0; i < old.siz(); i++) {
+    Constraint &c = old[i];
+
+    if (nodes[c.dest]->nonptr ||
+        nodes[c.src]->nonptr) {
+      // Ignore constraint if either side is a non-ptr.
+      continue;
+    }
+
+    // Replace the destination.
+    c.dest = hvn->as->nodes->rep(c.dest);
+
+    if (c.type != ConstraintAddrOf) {
+      // Don't replace the source of AddrOf by the rep.
+      c.src = hvn->as->nodes->rep(c.src);
+    }
+
+    if (!seen.count(c) &&
+        (c.type != ConstraintCopy ||
+         c.dest != c.src)) {
+      // Ignore (copy x x) and duplicates.
+      seen.insert(c);
+      hvn->as->constraints.push_back(c);
     }
   }
 
-  vector<Constraint> old_cons;
-  old_cons.swap(constraints);
-  DenseSet<Constraint> cons_seen;
-  FORN(i, old_cons.size()){
-    Constraint &C= old_cons[i];
-    //Ignore this constraint if either side is a non-ptr.
-    if(nodes[C.dest]->nonptr || nodes[C.src]->nonptr)
-      continue;
-    C.dest= get_node_rep(C.dest);
-    //Don't replace the source of addr_of by the rep: the merging
-    //  done in HVN/HCD is based only on pointer equivalence,
-    //  so non-reps may still be pointed to.
-    if(C.type != addr_of_cons)
-      C.src= get_node_rep(C.src);
-    //Ignore (copy X X) and duplicates.
-    if((C.type != copy_cons || C.dest != C.src) && !cons_seen.count(C)){
-      cons_seen.insert(C);
-      constraints.push_back(C);
-    }
+  // Step 3.
+  //
+  // Rewrite icall_cons to refer to the rep nodes.
+  std::vector<ConstraintInstPair> old_indirect_cons;
+  for (ConstraintInstMap::iterator i = hvn->as->indirect_constraints.begin(),
+         e = hvn->as->indirect_constraints.end(); i != e; i++) {
+    // Collect all indirect calls.
+    old_indirect_cons.push_back(*i);
   }
 
-  //Also rewrite icall_cons to refer to the rep nodes.
-  vector<pair<Constraint, set<Instruction*> > > old_icall_cons;
-  for(DenseMap<Constraint, set<Instruction*> >::iterator
-      it= icall_cons.begin(), ie= icall_cons.end(); it != ie; ++it){
-    old_icall_cons.push_back(*it);
-  }
-  icall_cons.clear();
-  FORN(i, old_icall_cons.size()){
-    Constraint &C= old_icall_cons[i].first;
-    if(nodes[C.dest]->nonptr || nodes[C.src]->nonptr)
+  // Why does this have such a drastic side effect?
+  hvn->as->indirect_constraints.clear();
+
+  for (int i = 0; i < old_indirect_cons.size(); i++) {
+    Constraint &c = old_indirect_cons[i].first;
+
+    if (nodes[c.dest]->nonptr ||
+        nodes[c.src]->nonptr) {
+      // Same as above.
       continue;
-    C.dest= get_node_rep(C.dest);
-    C.src= get_node_rep(C.src);
-    const set<Instruction*> &I= old_icall_cons[i].second;
-    icall_cons[C].insert(I.begin(), I.end());
+    }
+
+    c.dest = hvn->as->nodes->rep(c.dest);
+    c.src = hvn->as->nodes->rep(c.src);
+
+    const std::set<llvm::Instruction *> &inst = old_indirect_cons[i].second;
+    hvn->as->indirect_constraints[c].insert(inst.begin(), inst.end());
   }
 }
 
-OfflineGraph *HVN::make_graph(AnalysisSet *as) {
-  u32 nn= nodes.size();
-  assert(last_obj_node && "clump_addr_taken is required");
-  main2off.assign(nn, 0);
-  //Start the graph with only the null node (onn - size of off_nodes).
-  u32 onn= 1;
-  //Add the AFP nodes first (assuming clump_addr_taken has already moved
-  //  them in front of all the value nodes).
-  firstAFP= 1;
-  //Look for function object nodes.
-  for(u32 i= first_var_node; i <= last_obj_node; ){
-    const Node *N= nodes[i];
-    u32 sz= N->obj_sz;
-    assert(sz && "object nodes are not clumped");
-    assert(N->get_val() && "obj node has no value");
-    Function *F= dyn_cast<Function>(N->get_val());
-    //Skip this object if it's not a function.
-    if(!F){
-      i += sz;
+OfflineGraph *HVN::make_graph(AnalysisSet *as, u32 last_obj_node) {
+  std::vector<Node *> &nodes  = hvn->as->nodes->nodes;
+  OfflineGraph *og = new OfflineGraph(nodes.size());
+
+  // Add object nodes, excluding placeholders.
+  u32 object_node = NodeFirst;  
+  for (u32 i = NodeFirst; i <= last_obj_node;) {
+    const Node *node = nodes[i];
+
+    // Assert that object nodes are clumped. Not sure if this is really
+    // necessary though.
+    assert(node->obj_sz);
+    assert(node->val);
+
+    llvm::Function *f = llvm::dyn_cast<llvm::Function>(node->val);
+    if (!f) {
+      // Not a function, skip it.
+      i += node->obj_sz;
       continue;
     }
-    //Go through the retval and all the parameters of F.
-    for(u32 j= func_node_off_ret; j < sz; ++j){
-      //A rep parameter node gets a new offline node,
-      //  but non-rep parm. are not included in any constraints.
-      if(nodes[i+j]->is_rep()){
-        main2off[i+j]= onn++;
+
+    // Iterate through the return value and parameters.
+    for (u32 j = FUNC_NODE_OFF_RET; j < node->obj_sz; j++) {
+      if (nodes[i+j]->is_rep()) {
+        // Rep parameter nodes get new offline nodes and
+        // non-rep parameters are not included in any constraints.
+        og->offsets[i+j] = object_node;
+        object_node++;
       }
     }
-    //Set (i) to the node after the current object.
-    i += sz;
-  }
-  firstVAL= onn;
-  nAFP= firstVAL - firstAFP;
 
-  //Now add the value nodes, including p_i2p and temporary (no-value) nodes.
-  main2off[p_i2p]= onn++;
-  for(u32 i= last_obj_node+1; i < nn; ++i){
-    const Node *N= nodes[i];
-    assert(!N->obj_sz && "unexpected obj node");
-    if(N->is_rep()){
-      main2off[i]= onn++;
+    i += node->obj_sz;
+  }
+
+  og->first_func_param_node = 1;
+  og->first_value_node = object_node;  
+  og->num_func_param_nodes = og->first_value_node - first_func_param_node;
+
+  // Add value nodes, including the const-to-unknown-target placeholder and
+  // temporary (no-value) nodes.
+  og->offsets[NodeConstToUnknownTarget] = object_node++;
+  for (u32 i = last_obj_node + 1; i < nodes.size(); i++) {
+    const Node *node = nodes[i];
+    assert(!node->obj_sz);
+
+    if (node->is_rep()) {
+      og->offsets[i] = object_node++;
     }
   }
-  firstREF= onn;
-  nVAL= firstREF-firstVAL;
-  nREF= nVAL+nAFP;
-  //Create all the offline nodes, including REF.
-  //AFP & VAR start out direct; then indirect REFs are added.
-  off_nodes.assign(onn, OffNode());
-  off_nodes.insert(off_nodes.end(), nREF, OffNode(1));
-  //Mark AFPs indirect.
-  for(u32 i= firstAFP; i < firstVAL; ++i){
-    off_nodes[i].indirect= 1;
+
+  og->first_dereference_node = object_node;
+  og->num_value_nodes = og->first_dereference_node - og->first_value_node;
+  og->num_dereference_nodes = og->num_value_nodes + og->num_func_param_nodes;
+
+  og->nodes.assign(object_node, OfflineNode());
+  og->nodes.insert(og->nodes.end(), og->num_dereference_nodes,
+                   OfflineNode(true /* indirect */));
+
+  for (u32 i = og->first_AFP; i < og->first_VAL; i++) {
+    og->nodes[i].indirect = true;
   }
 }
 
 void HVN::run() {
   add_constraint_edges(this);
 
-  for (u32 i = this->graph->firstAFP; i < this->graph->firstREF; i++) {
-    if (!this->graph->nodes[i].dfs_num) {
-      do_dfs(this, i);
+  OfflineGraph *og = this->offline_graph;
+  u32 start = og->first_func_param_node;
+  u32 end = og->first_dereference_node + og->num_dereference_nodes;
+  
+  for (u32 i = start; i < end; i++) {
+    if (!og->nodes[i].dfs_num) {
+      do_dfs_at(this, i);
     }
   }
 

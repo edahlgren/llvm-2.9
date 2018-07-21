@@ -95,22 +95,19 @@ class Constraints {
 
   Constraints() {}
 
-  bool add(ConsType t, u32 dest, u32 src, u32 off = 0);
-};
-
-static bool add_constraint(ConsType t, u32 dest, u32 src, u32 off = 0) {
-  assert(src && dest);
+  bool add(ConsType t, u32 dest, u32 src, u32 off = 0) {
+    assert(src && dest);
   
-  if (t == ConstraintGEP && !off) {
-    t = CopyCons;
-  }
-  if (t == ConstraintCopy && src == dest) {
-    return false;
-  }
+    if (t == ConstraintGEP && !off) {
+      t = CopyCons;
+    }
+    if (t == ConstraintCopy && src == dest) {
+      return false;
+    }
 
-  Constraint c(t, dest, src, off);
-  assert_valid_constraint(c);
-  constraints.push_back(c);
-  return true;
-}
-
+    Constraint c(t, dest, src, off);
+    assert_valid_constraint(c);
+    constraints.push_back(c);
+    return true;
+  }
+};

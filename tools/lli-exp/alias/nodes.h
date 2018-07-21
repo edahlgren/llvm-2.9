@@ -1,11 +1,11 @@
 enum SpecialNodes {
-  NoNode = 0,           // no node, used for errors?
-  UnknownTarget,        // unknown target of pointers cast from int (i2p)
-  ConstToUnknownTarget, // const pointer to 1 (p_i2p)
-  FirstNode,            // first node representing a real variable
+  NodeNone = 0,           // no node, used for errors?
+  NodeUnknownTarget,        // unknown target of pointers cast from int (i2p)
+  NodeConstToUnknownTarget, // const pointer to 1 (p_i2p)
+  NodeFirst,            // first node representing a real variable
 };
 
-const u32 node_rank_min= 0xf0000000;
+const u32 NODE_RANK_MIN = 0xf0000000;
 
 class Node {
 public:
@@ -51,7 +51,7 @@ public:
 
 class Nodes {
 public:
-  u32 next_node;
+  u32 next;
   std::vector<Node *> nodes;
   
   llvm::DenseMap<llvm::Value*, u32> value_nodes;
@@ -64,6 +64,20 @@ public:
   std::set<u32> ind_calls;
 
   Nodes() {}
+
+  u32 rep(u32 i) {
+    u32 &r0= nodes[i]->rep;
+    if(r0 >= NODE_RANK_MIN) {
+      //If i has a rank, it is the rep.
+      return n;
+    }
+    
+    //Recurse on the parent to get the real rep.
+    u32 r= this->rep(r0);
+    // Set i's parent to the rep
+    r0 = r;
+    return r;
+  }
 
   u32 find_value_node(llvm::Value *v, bool allow_null = false) const;
   u32 find_object_node(llvm::Value *v, bool allow_null = false) const;
