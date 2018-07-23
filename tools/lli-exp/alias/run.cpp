@@ -13,27 +13,16 @@ AnalysisResult *run_analysis(llvm::Module *m) {
     }
   }  
 
-  u32 last_obj_node = as->shuffle_addr_taken_nodes();
-  as->nodes->validate();
+  u32 last_obj = shuffle_addr_taken_nodes(as);
 
+  do_hvn(as, last_obj);
 
-  {
-    HVN hvn(as, last_object_node);
-    hvn.run();
-  }
+  
 
-  {
-    HR hr(as);
-    hr.run();
-  }
-
-  {
-    HCD hcd(as);
-    hcd.run();
-  }
+  run_factor_load_store(as);
   
   {
-    ReduceLoadStore rls(as);
+    FactorLoadStore fls(as);
     rls.run();
   }
 
