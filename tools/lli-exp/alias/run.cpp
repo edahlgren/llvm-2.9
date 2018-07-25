@@ -47,17 +47,48 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   factor_load_store_constraints(as);
 
-  solve_anderson_points_to_sets(as);
+  // Step 9.
+  //
+  // Solve for anderson points-to sets.
+  //
+  //   Anders::pts_init();
+  //   Anders::solve_init();
+  //   Anders::solve();
 
-  {
-    HU hu(as);
-    hu.run();
+  // Step 10.
+  //
+  // Optimize the constraints again.
+  //
+  //   SFS::cons_opt();
+  //     hu();  
+  //   SFS::cons_opt_wrap();
 
-    merge_equivalent_nodes(as, hu.offline_graph);
-  }
+  // Step 11.
+  //
+  // Add interprocedural edges.
+  //
+  //   SFS::icfg_inter_edges();
 
-  // ...
+  // Step 12.
+  //
+  // Process constraints from indirect calls.
+  //
+  //   process_idr_cons();
 
+  // Step 13.
+  //  
+  // Make the data flow graph and supporting
+  // structures.
+  //
+  //   SFS::sfs_prep();
+
+  // Step 14.
+  //
+  // Destroy the AnalysisSet.
+
+  // Step 15.
+  //
+  // Reduce the SEG.  
   {
     T4 t4(seg);
     t4.run();
@@ -72,7 +103,37 @@ AnalysisResult *run_analysis(llvm::Module *m) {
     t5.run(t6.pnode_rdefs);
   }
 
-  delete as;
-  
-  seg->compute(dfg);  
+  // Step 16.
+  //
+  // Remove redundant nodes and edges in the SEG.
+  //
+  //   clean_G()
+
+  // Step 17.
+  //
+  // Partition variables into equivalence classes.
+  //
+  //   SFS::partition_vars()
+
+  // Step 18.
+  //
+  // Release all remaining memory structures not
+  // needed by the solver.
+
+  // Step 19.
+  //
+  // Reduce the SEG into the data flow grph.
+  //
+  //   SFS::compute_seg()
+
+  // Step 20.
+  //
+  // Solve the DFG
+  //
+  //   SFS::solve();
+
+  // Step 21.
+  //
+  // Write the points-to sets to disk so that they can be
+  // inspected, visualized, and queried.
 }
