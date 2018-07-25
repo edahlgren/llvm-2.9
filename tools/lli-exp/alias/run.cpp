@@ -1,15 +1,18 @@
 const u64 max_size = 1000000000;
 
+BDDConfig bdd_config = {
+};
+  
 AnalysisResult *run_analysis(llvm::Module *m) {
   // Step 1.
   //
   //
-  SEG *seg = new SEG(max_size);
+  AnalysisSet *as = init_analysis_set(m);
 
   // Step 2.
   //
   //
-  AnalysisSet *as = init_analysis_set(m);
+  SEG *seg = new SEG(max_size);
 
   // Step 3.
   //
@@ -49,12 +52,18 @@ AnalysisResult *run_analysis(llvm::Module *m) {
 
   // Step 9.
   //
+  //
+  BDDContext bdd_ctx(bdd_config);
+
+  // Step 10.
+  //
   // Solve for anderson points-to sets.
   //
   //   Anders::pts_init();
   //   Anders::solve_init();
   //   Anders::solve();
-
+  solve_anders_constraints(as, &bdd_ctx);
+  
   // Step 10.
   //
   // Optimize the constraints again.
