@@ -10,4 +10,6 @@ class AnalysisSet {
 
   std::set<u32> indirect_calls;
   ConstraintInstMap indirect_constraints;
+
+  NodeMap deref_to_var_nodes;
 };

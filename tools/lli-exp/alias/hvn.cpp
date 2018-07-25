@@ -247,7 +247,8 @@ static void merge_equal_pointers(AnalysisSet *as,
   //
   u32 num_nodes = nodes.size();
   std::hash_map>bitmap, u32> ptr_to_node;
-  
+
+  NodeMap dummy;
   for (int i = 0; i < num_nodes; i++) {
     u32 offset = og->offsets[i];
     if (!offset) {
@@ -279,7 +280,7 @@ static void merge_equal_pointers(AnalysisSet *as,
     }
 
     // Merge i into the node representing pe.
-    iter->second = as->nodes->merge(iter->second, i);
+    iter->second = as->nodes->merge(iter->second, i, &dummy);
   }
 
   // Step 2.

@@ -1,10 +1,19 @@
 const u64 max_size = 1000000000;
 
 AnalysisResult *run_analysis(llvm::Module *m) {
+  // Step 1.
+  //
+  //
   SEG *seg = new SEG(max_size);
 
+  // Step 2.
+  //
+  //
   AnalysisSet *as = init_analysis_set(m);
 
+  // Step 3.
+  //
+  //
   for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
     llvm::Function *f = *i;
 
@@ -13,18 +22,30 @@ AnalysisResult *run_analysis(llvm::Module *m) {
     }
   }  
 
+  // Step 4.
+  //
+  //
   u32 last_obj = shuffle_addr_taken_nodes(as);
 
+  // Step 5.
+  //
+  //
   do_hvn(as, last_obj);
 
-  
+  // Step 6.
+  //
+  //
+  do_hru(as, last_obj);
 
-  run_factor_load_store(as);
-  
-  {
-    FactorLoadStore fls(as);
-    rls.run();
-  }
+  // Step 7.
+  //
+  //
+  do_hcd(as, last_obj);
+
+  // Step 8.
+  //
+  //
+  factor_load_store_constraints(as);
 
   solve_anderson_points_to_sets(as);
 

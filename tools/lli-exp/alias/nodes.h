@@ -105,8 +105,10 @@ static void add_double_object_node(llvm::Value *v) {
   add_constraint(ConstraintAddrOf, object_node, object_node + 1);
 }
 
+typedef llvm::DenseMap<u32, u32> NodeMap;
+
 // This awkwardly depends on Anders::const_opt being run. Ugh.
-static u32 merge_nodes(u32 a, u32 a) {
+u32 Nodes::merge_nodes(u32 a, u32 a, NodeMap *node_map) {
   // Step 1.
   //
   // Perform a sanity check on the node indices first.
@@ -185,66 +187,32 @@ static u32 merge_nodes(u32 a, u32 a) {
   // Step 9.
   //
   //
-  llvm::DenseMap<u32, u32>::iterator ihv
-}
+  NodeMap::iterator i = node_map->find(a);
+  u32 hv1 = i == node_map->end() ? 0 : i->second;
 
-class ExtInfo {
-  // Each function name is mapped to its extf_t.
-  llvm::StringMap<ExternalFunctionType> info;
+  i = node_map->find(b);
+  u32 hv2 = i == node_map->end() ? 0 : i->second;
 
-  // Cache of is_ext results for all functions.
-  std::hash_map<const llvm::Function *, bool> cache;
-
-  ExtInfo() {
-    std::set<ExternalFunctionType> seen;
-    ExternalFunctionType prev = EFT_NOOP;
-    seen.insert(prev);
-    for (const ei_pair *p = external_function_database; p->n; ++p) {
-      if (p->t != prev) {
-        assert(!seen.count(p->t));
-        seen.insert(p->t);
-        prev = p->t;
-      }
-      
-      assert(!info.count(p->n));
-      info[p->n] = p->t;
-    }
-    
-    cache.clear();
-  }
-
-  extf_t get_type(const Function *f) const {
-    llvm::StringMap<ExternalFunctionType>::const_iterator i =
-      info.find(f->getNameStart());
-    if (i == info.end())
-      return EFT_OTHER;
-    else
-      return i->second;
-  }
-
-  bool has_static(const Function *F) const;
-  bool has_static2(const Function *F) const;
-  bool is_alloc(const Function *F) const;
-  bool no_struct_alloc(const Function *F) const;
-  bool is_noop(const Function *F) const;
-  bool is_ext(const Function *F) {
-    //Check the cache first; everything below is slower.
-    std::hash_map<const Function *, bool>::iterator i = this->cache.find(f);
-    if (i != this->cache.end()) {
-      return i->second;
-    }
-  
-    bool res;
-    if(f->isDeclaration() || f->isIntrinsic()) {
-      res = true;
+  if (hv2) {
+    if (!hv1) {
+      node_map->insert(std::pair<u32, u32>(a, hv2));
     } else {
-      ExternalFunctionType t = get_type(f);
-      res = t == EFT_ALLOC
-        || t == EFT_REALLOC
-        || t == EFT_NOSTRUCT_ALLOC
-        || t == EFT_NOOP;
+      u32 rep_hv1 = rep(hv1);
+      u32 rep_hv2 = rep(hv2);
+
+      if (rep_hv1 != rep_hv2) {
+        merge(rep_hv1, rep_hv2, node_map);
+      }
+
+      if (a == rep_hv2) {
+        a = rep(a);
+      } else {
+        assert(nodes[a]->is_rep());
+      }
     }
-    this->cache[f] = res;
-    return res;
+
+    node_map->erase(b);
   }
-};
+
+  return a;
+}

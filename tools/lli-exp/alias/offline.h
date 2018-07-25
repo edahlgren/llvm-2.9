@@ -5,6 +5,7 @@ class OfflineNode {
   u32 dfs_num;
   u32 rep;
   u32 offset;
+  u32 main;
 
   bool del;
   bool indirect;
@@ -41,6 +42,8 @@ class OfflineGraph {
   u32 first_dereference_node;
 
   u32 next_label;
+
+  // This shouldn't be in the graph itself.
   u32 dfs_num;
 
   std::stack<u32> node_stack;  
@@ -139,19 +142,6 @@ void do_hr(AnalysisSet *as, u32 last_obj, u32 threshold);
 
 void do_hru(AnalysisSet *as, u32 last_obj, u32 threshold);
 
-class HCD {
-  AnalysisSet *as;
-  u32 curr_dfs;
+void do_hcd(AnalysisSet *as, u32 last_obj);
 
-  std::stack<u32> dfs_stack;
-  OfflineGraph *offline_graph;
-
-  HCD(AnalysisSet *as, u32 last_obj) :as(as), curr_dfs(1) {
-    offline_graph = new OfflineGraph(as->nodes->nodes, last_obj);
-  }
-
-  ~HCD() {
-    assert(dfs_stack.empty());
-    delete offline_graph;
-  }  
-};
+void factor_load_store_constraint(AnalysisSet *as);

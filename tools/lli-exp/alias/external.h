@@ -27,6 +27,67 @@ enum ExternalFunctionType {
   EFT_OTHER         //not found in the list
 };
 
+class ExtInfo {
+  // Each function name is mapped to its extf_t.
+  llvm::StringMap<ExternalFunctionType> info;
+
+  // Cache of is_ext results for all functions.
+  std::hash_map<const llvm::Function *, bool> cache;
+
+  ExtInfo() {
+    std::set<ExternalFunctionType> seen;
+    ExternalFunctionType prev = EFT_NOOP;
+    seen.insert(prev);
+    for (const ei_pair *p = external_function_database; p->n; ++p) {
+      if (p->t != prev) {
+        assert(!seen.count(p->t));
+        seen.insert(p->t);
+        prev = p->t;
+      }
+      
+      assert(!info.count(p->n));
+      info[p->n] = p->t;
+    }
+    
+    cache.clear();
+  }
+
+  extf_t get_type(const Function *f) const {
+    llvm::StringMap<ExternalFunctionType>::const_iterator i =
+      info.find(f->getNameStart());
+    if (i == info.end())
+      return EFT_OTHER;
+    else
+      return i->second;
+  }
+
+  bool has_static(const Function *F) const;
+  bool has_static2(const Function *F) const;
+  bool is_alloc(const Function *F) const;
+  bool no_struct_alloc(const Function *F) const;
+  bool is_noop(const Function *F) const;
+  bool is_ext(const Function *F) {
+    //Check the cache first; everything below is slower.
+    std::hash_map<const Function *, bool>::iterator i = this->cache.find(f);
+    if (i != this->cache.end()) {
+      return i->second;
+    }
+  
+    bool res;
+    if(f->isDeclaration() || f->isIntrinsic()) {
+      res = true;
+    } else {
+      ExternalFunctionType t = get_type(f);
+      res = t == EFT_ALLOC
+        || t == EFT_REALLOC
+        || t == EFT_NOSTRUCT_ALLOC
+        || t == EFT_NOOP;
+    }
+    this->cache[f] = res;
+    return res;
+  }
+};
+
 struct ei_pair {
   const char *n;
   extf_t t;
