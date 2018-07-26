@@ -29,6 +29,104 @@ class OfflineNode {
 
 typedef std::hash_map<std::pair<u32, u32>, u32>::const_iterator gep_label_iterator;
 
+class SimpleOfflineGraph {
+  std::vector<OfflineNode> nodes;
+  u32 next_label;
+  u32 dfs_num;
+  std::hash_map<std::pair<u32, u32>, u32> gep_to_ptr;
+
+  SimpleOfflineGraph(AnalysisSet *as, u32 last_obj) {
+    nodes.assign(as->nodes->nodes.size(), OfflineNode());
+    dfs_num = 1;
+    next_label = 1;
+    
+    for (int i = 1; i < last_obj + 1; i++) {
+      nodes[i].indirect = true;
+    }
+
+    for (int i = 0; i < as->constraints.size(); i++) {
+      Constraint &c = as->constraints[i];
+
+      switch (c.type) {
+      case ConstraintAddrOf:
+      case ConstraintLoad:
+        nodes[c.dest].indirect = true;
+        break;
+        
+      case ConstraintStore:
+        // Ignore.
+        break;
+
+      case ConstraintCopy:
+        nodes[c.dest].edges.set(c.src);
+        break;
+
+      case ConstraintGEP:
+        std::pair<u32, u32> a(c.src, c.off);
+        gep_label_iterator it = gep_to_ptr.find(a);
+        u32 label = next_label;
+
+        if (it != gep_to_ptr.end()) {
+          label = it->second;
+        } else {
+          gep_to_ptr[a] = label;
+          next_label++;
+        }
+
+        nodes[c.dest].labels.set(label);
+        break;
+
+      default:
+        assert(false && "unknown constraint type");
+      }
+    }
+    gep_to_ptr.clear();
+  }
+  
+  u32 is_rep(u32 i) {
+    return nodes[i].rep > nodes.size();
+  }
+
+  u32 rank(u32 i) {
+    return MAX_U32 - nodes[i].rep;
+  }
+
+  u32 rep(u32 i) {
+    if (is_rep(i)) {
+      return i;
+    }
+
+    nodes[i].rep = rep(nodes[i].rep);
+    return nodes[i].rep;
+  }
+
+  u32 merge(u32 a, u32 b) {
+    assert(is_rep(a) && is_rep(b));
+
+    if (a == b) {
+      return a;
+    }
+
+    u32 ra = rank(a), rb = rank(b);
+
+    if (ra < rb) {
+      std::swap(a, b);
+    } else if (ra == rb) {
+      nodes[a].rep--;
+    }
+
+    nodes[a].indirect |= nodes[b].indirect;
+    nodes[a].labels |= nodes[b].labels;
+    nodes[a].edges |= nodes[b].edges;
+
+    nodes[b].rep = a;
+    nodes[b].labels.clear();
+    nodes[b].edges.clear();
+
+    return a;
+  }
+};
+
 class OfflineGraph {
   std::vector<OfflineNode> nodes;
   std::vector<u32> offsets;
@@ -46,9 +144,7 @@ class OfflineGraph {
   // This shouldn't be in the graph itself.
   u32 dfs_num;
 
-  std::stack<u32> node_stack;  
   std::hash_map<bitmap, u32> label_to_ptr;
-  std::hash_map<std::pair<u32, u32>, u32> gep_to_ptr;
 
   OfflineGraph(std::vector<Node *> &ns, u32 last_obj) {
     nodes.assign(ns.size(), OfflineNode());
@@ -143,5 +239,7 @@ void do_hr(AnalysisSet *as, u32 last_obj, u32 threshold);
 void do_hru(AnalysisSet *as, u32 last_obj, u32 threshold);
 
 void do_hcd(AnalysisSet *as, u32 last_obj);
+
+void do_hu(AnalysisSet *as, u32 last_obj);
 
 void factor_load_store_constraint(AnalysisSet *as);

@@ -1,6 +1,6 @@
 // Shift nodes that have their address taken to the front of the nodes set,
 // which clumps them closely together. This is an optimization.
-static u32 move_addr_taken_nodes() {
+u32 shuffle_addr_taken_nodes() {
   std::vector<Node *> old_nodes;
   old_nodes.swap(nodes);
 
@@ -93,187 +93,119 @@ static u32 move_addr_taken_nodes() {
   return last_object_node;
 }
 
-static OfflineGraph *make_offline_graph_1(u32 last_object_node) {  
-}
-
-static OfflineGraph *make_offline_graph_2(u32 last_object_node) {
-  // Step 1.
-  //
-  // Intialize a new offline graph that fits all of our nodes.
-  OfflineGraph *graph = new OfflineGraph(nodes.size());
-
-  // Step 2.
-  //
-  // Mark address-taken variables as indirect.
-  for (int i = 1, i < last_object_node + 1; i++) {
-    graph->nodes[i].indirect = true;
-  }
-
-  // Step 3.
-  //
-  // Populate the graph from the constraints.
-  for (int i = 0; i < constraints.size(); i++) {
-    const Constraint &c = constraints[i];
-
-    switch (c.type) {
-    case ConstraintAddrOf: // D = &S
-    case ConstraintLoad:   // D = *S
-      graph->nodes[c.dest].indirect = true;
-      break;
-    case ConstraintStore:  // *D = S
-      // Ignore store.
-      break;
-    case ConstraintCopy:   // D = S
-      graph->nodes[c.dest].edges.set(c.src);
-    case ConstraintGEP:   // D = S + off
-      std::pair<u32, u32> a(c.src, c.off);
-      gep_label_iterator j = graph->gep_labels.find(a);
-      u32 l = graph->next_label;
-
-      if (j != graph->gep_labels.end()) {
-        l = j->second;
-      } else {
-        graph->gep_labels[a] = l;
-        graph->next_label++;
-      }
-
-      graph[c.dest].labels.set(l);
-      break;
-    default:
-      assert(false && "unknown constraint type");
-    }
-  }
-
-  // Step 4.
-  //
-  // Clear the GEP labels.
-  graph->gep_labels.clear();
-
-  return graph;
-}
-
-void Constraints::optimize() {
-  // Step 1.
-  //
-  // Clump nodes with address taken variables together at the front of
-  // the nodes set so that they'll be easier to solve for.
-  u32 last_object_node = move_addr_taken_nodes();
-
-  // Step 2.
-  //
-  // Apply the HVN algorithm to the constraints.
-  {
-    HVN hvn(false, last_object_node);
-    hvn.run();
-  }
-
-  // Step 3.
-  //
-  // Apply the HRU algorithm to the constraints.
-  {
-    HR hr();
-    hr.run();
-  }
-
-  // Step 4.
-  //
-  // Apply the HCD algorithm to the constraints.
-  {
-    HCD hcd();
-    hcd.run();
-  }
-
-  // Step 5.
-  //
-  // Reduce the load/store constraints
-  refactor_load_store();
-
-  // Step 6.
-  //
-  // Solve for the Anderson points-to sets.
-  anderson_solve();
+static bool pts_is_null(AnalysisSet *as, BDDSets *bdds,
+                 u32 index, u32 offset) {
+  assert(index && index < as->nodes->nodes.size());
   
-  // Step 7.
-  //
-  // Initialize an offline graph.
-  OfflineGraph *offline = make_offline_graph(last_object_node);
-
-  // Step 8.
-  //
-  // Perform the HU algorithm to detect equivalences.
-  {
-    HU hu(offline);
-    hu.run();
+  bdd pts = as->nodes->nodes[as->nodes->rep(index)]->points_to;
+  
+  if (!offset) {
+    return pts == bddfalse;
   }
 
-  std::hash_map<bitmap, u32> eq;
-  for (int i = 1; i < offline.nodes.size(); i++) {
-    Node *node = nodes[i];
-    assert(node->is_rep());
+  assert(offset < bdds->gep_bdds.size() &&
+         bdds->gep_bdds[offset] != bddfalse);
 
-    // Step 9.
-    //
-    // Handle nonptr nodes.
-    OfflineNode *offline_node = offline->get_node(i);
-    if (offline_node->labels.empty() ||
-        offline_node->labels.test(0)) {
-      nodes[i]->nonptr = true;
+  bdd prod = bdd_relprod(pts, bdds->gep_bdds[offset], bdds->ctx->pts_domain);
+  bdd gep = bdd_replace(prod, bdds->gep_to_pts);
+  return gep == bddfalse;
+}
+
+static std::vector<u32> rewrite_constraints_to_use_node_reps(AnalysisSet *as,
+                                                             BDDSets *bdds) {
+
+  llvm::DenseSet<Constraint> seen;
+  std::vector<Constraint> old;
+  old.swap(as->constraints);
+
+  std::vector<u32>& redir;
+  redir.assign(old.size(), 0);
+
+  for (int i = 0; i < old.size(); i++) {
+    Constraint old_con = old[i];
+
+    Node *dest_node = as->nodes->nodes[old_con.dest];
+    Node *src_node = as->nodes->nodes[old_con.src];
+
+    if (dest_node->nonptr || src_node->nonptr) {
+      redir[i] = MAX_U32;
       continue;
     }
 
-    // Step 10.
-    //
-    // Handle equivalent pointer nodes.
-    std::hash_map<bitmap, u32>::iterator j = eq.find(offline_node.labels);
-    if (j != eq.end()) {
-      // Merge the equivalent nodes.
-      merge_nodes(...);
-    } else {
-      // Save the equivalence relation.
-      eq[offline_node.labels] = i;
-    }
-  }
-
-  // Step 11.
-  //
-  // Free the temporary structures.
-  delete offline;
-  eq.clear();
-
-  llvm::DenseSet<llvm::Constraint> seen;
-  std::vector<llvm::Constraint> old_cons;
-  old_cons.swap(constraints);
-
-  std::vector<u32> redir;
-  redir.assign(old_cons.size(), 0);
-
-  for (int i = 0; i < old_cons.size(); i++) {
-    const Constraint &oc = old_cons[i];
-
-    if (nodes[oc.dest]->nonptr ||
-        nodes[oc.src]->nonptr) {
+    if (old_con.type != ConstraintStore &&
+        old_con.type != ConstraintAddrOf &&
+        pts_is_null(as, bdds, old_con.src, 0)) {
       redir[i] = MAX_U32;
+      continue;
     }
 
-    if (oc.type != ConstraintStore &&
-        oc.type != ConstraintAddrOf // ...) {
-      ///...
+    if (old_con.type == ConstraintStore &&
+        pts_is_null(as, bdds, old_con.dest, 0)) {
+      redir[i] = MAX_U32;
+      continue;
     }
 
-    redir[i] = constraints.size();
-    constraints.push_back(c);
+    Constraint c(old_con);
+    c.dest = as->nodes->rep(c.dest);
+
+    if (c.type != ConstraintAddrOf) {
+      c.src = as->nodes->rep(c.src);
+    }
+
+    if (c.type == ConstraintCopy &&
+        !c.off && c.src == c.dest) {
+      redir[i] = MAX_U32;
+      continue;
+    }
+    
+    if (c.type != ConstraintLoad &&
+        c.type != ConstraintStore) {
+      seen.insert(c);
+    }
+
+    redir[i] = as->constraints.size();
+    as->constraints.push_back(c);
   }
 
-  std::vector<32> new_idr;
+  return std::move(redir);
+}
 
-  // ...
 
-  std::vector<u32> new_defs(defs.size());
-  std::vector<u32> new_uses(uses.size());
+void shrink_indirect_constraints(AnalysisSet *as,
+                                 std::vector<u32> &redir) {
+  std::vector<u32> new_indirect;  
+  for (ConstraintInstMap::iterator i = as->indirect_constraints.begin(),
+         e = as->indirect_constraints.end(); i != e; i++) {
+    if (redir[*i] != MAX_U32) {
+      new_indirect.push_back(redir[*i]);
+    }
+  }
 
-  // ...  
-  
-  redir.clear();
-  new_defs.clear();
-  new_uses.clear();  
+  std::sort(new_indirect.begin(), new_indirect.end());
+  ConstraintInstMap::iterator e = std::unique(new_indirect.begin(),
+                                              new_indirect.end());
+  new_indirect.erase(e, new_indrect.end());
+  as->indirect_constraints.swap(new_indirect);
+}
+
+void shrink_defs_and_uses(Processor *proc,
+                          std::vector<u32> &redir) {
+                          
+  std::vector<u32> new_defs(proc->defs.size());
+  std::vector<u32> new_uses(proc->uses.size());
+
+  for (int i = 0; i < proc->defs.size(); i++) {
+    if (redir[i] != MAX_U32) {
+      if (proc->defs[i]) {
+        new_defs[redir[i]] = defs[i];
+      }
+
+      if (proc->uses[i]) {
+        new_uses[redir[i]] = uses[i];
+      }
+    }
+  }
+
+  proc->defs.swap(new_defs);
+  proc->uses.swap(new_uses);
 }

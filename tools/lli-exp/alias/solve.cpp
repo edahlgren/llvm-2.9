@@ -179,8 +179,8 @@ struct SolveState {
   }
 };
 
-SolveState(AnalysisSet *as, BDDContext *bdd_ctx) {
-  this->bdds = new BDDSets(bdd_ctx, as);
+SolveState(AnalysisSet *as, BDDSets *bdds) {
+  this->bdds = bdds;
   
   u32 num_pts = as->last_obj() + 1;
   for (int i = 0; i < as->constraints.size(); i++) {

@@ -28,4 +28,28 @@ struct BDDContext {
   }
 };
 
-void solve_anders_constraints(AnalysisSet *as, BDDContext *bdd_ctx);
+struct BDDSets {
+  BDDContext *ctx;
+  
+  std::vector<bdd> variable_bdds;
+  bddPair *gep_to_pts;
+  std::vector<bdd> offset_bdds;
+  std::vector<bdd> gep_bdds;
+
+  bdd ext_func_nodes;
+  std::set<u32> ext_func_node_set;
+  std::set<u32> func_node_set;
+
+  BDDSets(BDDContext *bdd_ctx, AnalysisSet *as);
+
+  bdd get_variable_bdd(u32 i) {
+    bdd &b = variable_bdds[i];
+    if(b == bddfalse) {
+      b = fdd_ithvar(0, i);
+    }
+    return b;
+  }
+};
+
+void solve_anders_constraints(AnalysisSet *as, BDDSets *bdds);
+

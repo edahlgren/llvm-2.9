@@ -364,7 +364,7 @@ static void __do_hvn(AnalysisSet *as,
 
   std::stack<u32> dfs_stack;  
   for (u32 i = hvn_start(og); i < hvn_end(og); i++) {
-    if (!og->nodes[i].dfs_num) {
+    if (!offline.nodes[i].dfs_num) {
       do_dfs_at(&offline, &dfs_stack, i);
     }
   }

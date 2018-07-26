@@ -54,7 +54,8 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   //
   BDDContext bdd_ctx(bdd_config);
-
+  BDDSets bdds = new BDDSets(bdd_ctx);
+  
   // Step 10.
   //
   // Solve for anderson points-to sets.
@@ -62,15 +63,19 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //   Anders::pts_init();
   //   Anders::solve_init();
   //   Anders::solve();
-  solve_anders_constraints(as, &bdd_ctx);
+  solve_anders_constraints(as, bdds);
   
   // Step 10.
   //
-  // Optimize the constraints again.
   //
-  //   SFS::cons_opt();
-  //     hu();  
-  //   SFS::cons_opt_wrap();
+  do_hu(as, last_obj);
+
+  // Step 11.
+  //
+  //
+  std::vector<u32> rep_cons = node_rep_constraints(as, &bdds);
+  shrink_indirect_constraints(as, rep_cons);
+  shrink_defs_and_uses(proc, rep_cons);
 
   // Step 11.
   //
