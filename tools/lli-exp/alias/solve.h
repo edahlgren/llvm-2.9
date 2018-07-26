@@ -28,28 +28,4 @@ struct BDDContext {
   }
 };
 
-struct BDDSets {
-  std::vector<bdd> variable_bdds;
-  bddPair *gep_to_pts;
-  std::vector<bdd> offset_bdds;
-  std::vector<bdd> gep_bdds;
-
-  bdd ext_func_nodes;
-  std::set<u32> ext_func_node_set;
-  std::set<u32> func_node_set;
-
-  BDDSets(BDDContext *bdd_ctx, AnalysisSet *as);
-};
-
-class Solver {
-public:
-  std::vector<Constraint> cplx_cons;
-  Worklist *worklist;
-
-  Solver(AnalysisSet *as, BDDSets *bdds);
-  ~Solver() {
-    delete worklist;
-  }
-
-  void solve();
-};
+void solve_anders_constraints(AnalysisSet *as, BDDContext *bdd_ctx);
