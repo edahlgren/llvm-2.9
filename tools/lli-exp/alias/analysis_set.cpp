@@ -76,3 +76,58 @@ AnalysisSet *init_analysis_set(llvm::Module *m) {
 void AnalysisSet::validate() {
   assert(this->node->next == this->nodes->size());  
 }
+
+FlowAnalysisSet *init_flow_analysis_set(AnalysisSet *as,
+                                        Processor *proc,
+                                        BDDSet *bdds,
+                                        u32 num_tmp) {
+  
+  FlowAnalysisSet *fas = new FlowAnalysisSet();
+
+  fas->top.assign(as->nodes->nodes.size() + num_tmp, PtsSet());
+  fas->strong.assign(as->last_obj() + 1, false);
+
+  for (int i = 0; i < as->last_obj() + 1; i++) {
+    fas->strong[i] = !as->nodes->nodes[i]->weak;
+  }
+
+  fas->pdom = fdd_ithset(0);
+  fas->g_to_p = bdd_newpair();
+  fdd_setpair(g_to_p, 1, 0);
+  fas->bdd_off = bdds->gep_bdds;
+
+  for (int i = 0; i < as->constraints.size(); i++) {
+    Constraint &c = as->constraints[i];
+    if (c.off == MAX_U32) {
+      continue;
+    }
+
+    u32 index = fas->dfs->insert(c);
+
+    if (proc->defs[i]) {
+      assert(c.type == ConstraintStore);
+      fas->defs.resize(index + 1, 0);
+      fas->defs[index] = proc->defs[i];
+      
+      continue;
+    }
+
+    if (proc->uses[i]) {
+      assert(c.type == ConstraintLoad);
+      fas->uses.resize(index + 1, 0);
+      fas->uses[index] = proc->uses[i];
+      
+      continue;
+    }
+
+    if ((c.type == ConstraintAddrOf ||
+         c.type == ConstraintCopy) &&
+        c.dest <= as->last_obj()) {
+      fas->global_to_dfg[c.dest].push_back(index);
+    }
+  }
+
+  fas->dfg->finalize_insert();
+
+  return fas;
+}

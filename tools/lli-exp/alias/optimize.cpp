@@ -93,24 +93,6 @@ u32 shuffle_addr_taken_nodes() {
   return last_object_node;
 }
 
-static bool pts_is_null(AnalysisSet *as, BDDSets *bdds,
-                 u32 index, u32 offset) {
-  assert(index && index < as->nodes->nodes.size());
-  
-  bdd pts = as->nodes->nodes[as->nodes->rep(index)]->points_to;
-  
-  if (!offset) {
-    return pts == bddfalse;
-  }
-
-  assert(offset < bdds->gep_bdds.size() &&
-         bdds->gep_bdds[offset] != bddfalse);
-
-  bdd prod = bdd_relprod(pts, bdds->gep_bdds[offset], bdds->ctx->pts_domain);
-  bdd gep = bdd_replace(prod, bdds->gep_to_pts);
-  return gep == bddfalse;
-}
-
 static std::vector<u32> rewrite_constraints_to_use_node_reps(AnalysisSet *as,
                                                              BDDSets *bdds) {
 

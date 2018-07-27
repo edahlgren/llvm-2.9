@@ -84,6 +84,10 @@ public:
 
   bool represents_itself() { return rep == MAX_U32; }
 
+  bool is_rep() {
+    return represents_itself();
+  }
+  
   bool unreachable() { return rep == 0; }
 };
 
@@ -92,7 +96,7 @@ class SEG {
 public:
   // This node corresponds to the node before main. It contains things
   // like globals.
-  SEGNode *start;
+  SEGIndex start;
   
   // Nodes is the set of all nodes, where the index into this vector
   // is the unique id of the node. This id is used to chain nodes
@@ -110,11 +114,11 @@ public:
     // only to detect errors.
     //
     // I find this questionably useful. Reconsider after translation.
-    make_and_insert_node(false /* non_preserving */);
+    insert_new_node(false /* non_preserving */);
 
     // Create a node that is non-preserving for initializing globals. This
     // will be the first valid node.
-    start = make_and_insert_node(true /* non_preserving */);
+    start = insert_new_node(true /* non_preserving */);
   }
 
   ~SEG() {
@@ -132,11 +136,11 @@ public:
     return nodes[i];
   }
 
-  SEGNode *get_representative_node(SEGIndex i) {
+  SEGNode *get_rep_node(SEGIndex i) {
     return get_node(get_representative_node(i));
   }
 
-  SEGIndex get_representative_index(SEGIndex i) {
+  SEGIndex get_rep_index(SEGIndex i) {
     assert_valid_index(i);
     if (nodes[i]->represents_itself()) {
       return i;
@@ -171,6 +175,12 @@ public:
     }
   }
 
+  void erase_edge(SEGIndex src, SEGIndex dest) {
+    assert_valid_index(src);
+    assert_valid_index(dst);
+    nodes[dest].pred.erase(src);
+  }
+
   bool assert_valid_index(SEGIndex i) {
     assert(i > 0 && "invalid index: 0");
     assert(i < nodes.size() && "invalid index: greater than graph size");
@@ -180,7 +190,7 @@ public:
 
   bool unreachable_index(SEGIndex i) {
     return !i || nodes[i]->rep == 0;
-  }
+  }  
 
   void print(std::ostream &os);
   bool node_survives_reduction(SEGNode *node);

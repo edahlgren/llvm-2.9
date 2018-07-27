@@ -88,6 +88,18 @@ public:
   u32 merge(u32 a, u32 b);
 
   void validate();
+
+  u32 pe(llvm::Value* v){
+    u32 n = find_value_node(v, 1);
+    if(!n)
+      return MAX_U32;
+    return rep(n);
+  }
+
+  u32 pe(u32 n){
+    assert(n && n < nodes.size() && "node ID out of range");
+    return rep(n);
+  }  
 };
 
 static void add_double_object_node(llvm::Value *v) {

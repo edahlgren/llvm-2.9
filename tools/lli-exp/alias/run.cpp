@@ -60,9 +60,6 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   // Solve for anderson points-to sets.
   //
-  //   Anders::pts_init();
-  //   Anders::solve_init();
-  //   Anders::solve();
   solve_anders_constraints(as, bdds);
   
   // Step 10.
@@ -81,25 +78,27 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   // Add interprocedural edges.
   //
-  //   SFS::icfg_inter_edges();
-
+  FunctionMap tgts = add_interprocedural_edges(m, as, proc, seg);
+  
   // Step 12.
   //
   // Process constraints from indirect calls.
   //
-  //   process_idr_cons();
+  u32 num_tmp = process_indirect_constraints(as, tgts);
 
   // Step 13.
   //  
   // Make the data flow graph and supporting
   // structures.
   //
-  //   SFS::sfs_prep();
+  FlowAnalysisSet *fas = init_flow_analysis_set(as, proc, &bdds, num_tmp);
 
   // Step 14.
   //
   // Destroy the AnalysisSet.
-
+  delete as;
+  delete proc;
+  
   // Step 15.
   //
   // Reduce the SEG.  
@@ -121,14 +120,14 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   // Remove redundant nodes and edges in the SEG.
   //
-  //   clean_G()
-
+  remove_redundant_nodes(fas, seg);
+  
   // Step 17.
   //
   // Partition variables into equivalence classes.
   //
   //   SFS::partition_vars()
-
+    
   // Step 18.
   //
   // Release all remaining memory structures not
