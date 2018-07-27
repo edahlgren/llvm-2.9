@@ -1005,4 +1005,6 @@ void solve_anders_constraints(AnalysisSet *as, BDDContext *bdd_ctx) {
   }
 
   delete ss;
+
+  return new AndersSolution(as, bdds);
 }

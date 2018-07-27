@@ -300,63 +300,159 @@ void SEG::do_reduction() {
   t5.run(t6.pnode_rdefs);
 }
 
-SEG *build_constraint_based_seg(llvm::Module *m, u64 max_size = 1000000000) {
-  // Step 1.
-  //
-  // Initialize a new evaluation graph and a processor wrapper that
-  // will hold def-use information.
-  SEG *graph = new SEG(max_size);
-  Processor *proc = new Processor(graph);
+void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
+                     ConstraintClasses *cc, Partitions *parts) {
 
-  // Step 2.
-  //
-  // Walk the module to find constraints and fill in def-use information.
-  Constraints *cs = build_constraints(m, proc);
+  std::vector<u32> rst;
 
-  // Step 3.
-  //
-  // Optimize the constraints so that they'll be easier to solve for.
-  cs->optimize();
-
-  // ??
-  graph->make_interprocedural(m);
+  std::map<u32, bitmap> n2g;
+  typedef map<u32, bitmap>::iterator n2g_iterator;
   
-  // Step 4.
-  //
-  // Solve the constraints.
-  cs->solve();
+  std::map<u32, u32> pass_defs;
+  typedef std::map<u32, u32>::iterator pass_defs_iterator;
 
+  std::map<u32, u32> pass_node;
+  typedef std::map<u32, u32>::iterator pass_node_iterator;
+
+  std::map<u32, std::vector<u32> > pass_uses;
+  typedef std::map<u32, std::vector<u32>>::iterator pass_uses_iterator;
+
+  for (int i = 1; i < parts->var_part.size(); i++) {
+    u32 rep = parts->var_part[i].find_first();
+    u32 np = false, r = false;
+
+    for (Partitions::obj_to_cons_part_iterator j = parts->obj_to_cons_part.begin(),
+           je = parts->obj_to_cons_part.end(); j != je; j++) {
+
+      if (*j == 0) {
+        for (Partitions::var_part_iterator k = parts->var_part.begin(),
+               ke = parts->var_part.end(); k != ke; k++) {
+        }
+        
+        continue;
+      }
+
+      for (Partitions::cons_part_iterator k = parts->cons_part.begin(),
+             ke = parts->cons_part.end(); k != ke; k++) {
+      }
+    }
+
+    if (np <= 1 || r <= 1) {
+      for (std::vector<u32>::iterator j = cc->cons_load.begin(),
+             je = cc->cons_load.end(); j != je; j++) {
+      }
+      
+      for (std::vector<u32>::iterator j = cc->cons_store.begin(),
+             je = cc->cons_store.end(); j != je; j++) {
+      }
+
+      for (std::vector<u32>::iterator j = rst.begin(), je = rst.end();
+           j != je; j++) {
+      }
+
+      continue;
+    }
+
+    T4 t4(seg);
+    t4.run();
+    
+    T2 t2(seg);
+    t2.run(t4.torder);
+    
+    T6 t6(seg);
+    t6.run(t4.rdefs);
+    
+    T5 t5(seg);
+    t5.run(t6.pnode_rdefs);
+
+    for (Partitions::obj_to_cons_part_iterator j = parts->obj_to_cons_part.begin(),
+           je = parts->obj_to_cons_part.end(); j != je; j++) {
+
+      for (Partitions::cons_part_iterator k = parts->cons_part.begin(),
+             ke = parts->cons_part.end(); k != ke; k++) {
+      }
+    }
+
+    for (pass_uses_iterator j = pass_uses.begin(), je = pass_uses.end();
+         j != je; j++) {
+    }
+
+    for (pass_defs_iterator j = pass_defs.begin(), je = pass_defs.end();
+         j != je; j++) {
+    }
+
+    for (int j = 1; j < seg->nodes.size(); j++) {
+    }
+
+    for (std::vector<u32>::iterator j = t4.torder.begin(), je = t4.torder.end();
+         j != je; j++) {
+    }
+
+    for (std::vector<u32>::iterator j = t5.new_reps.begin(), je = t5.new_reps.end();
+         j != je; j++) {      
+    }
+  }
+
+  std::hash_map<bitmap, std::vector<u32> > ld;
+  typedef std::hash_map<bitmap, std::vector<u32> >::iterator ld_iterator;
+
+  for (n2g_iterator i = n2g.begin(), e = n2g.end(); i != e; i++) {    
+  }
+
+  for (ld_iterator i = ld.begin(), e = ld.end(); i != e; i++) {    
+    std::vector<u32> &n = i->second;
+
+    if (...) {
+      for (std::vector<u32>::iterator j = n.begin(); je = n.end();
+           j != je; j++) {
+      }
+
+      continue;
+    }
+
+    for (int j = 1; j < n.size(); j++) {
+    }
+  }
   
+  for (tp_it i = fas->dfg.tp_begin(), e = fas->dfg.tp_end(); i != e; ++i) {
+    for (std::vector<u32>::iterator j = i->succ.begin(), je = i->succ.end();
+         j != je; j++) {      
+    }
+  }
+
+  typedef vector<pair<u32,u32> >::iterator pmap_it;
   
-  
-  // Reduce the graph to make it more sparse.
-  graph->reduce();
+  for (ld_it i = fas->dfg.ld_begin(), e = fas->dfg.ld_end(); i != e; ++i) {
+    for (pmap_it j = i->part_succ.begin(), je = i->part_succ.end();
+         j != je; j++) {
+    }    
+  }
 
-  /**
+  for (st_it i = fas->dfg.st_begin(), e = fas->dfg.st_end(); i != e; ++i) {
+    for (pmap_it j = i->part_succ.begin(), je = i->part_succ.end();
+         j != je; j++) {
+    }    
+  }
 
-  // Build a data flow graph from the constraints.
-  DataFlowGraph *dfg = build_dfg(cs);
+  for (np_it i = fas->dfg.np_begin(), e = fas->dfg.np_end(); i != e; ++i) {
+    for (std::vector<u32> j = i->succ.begin(), je = i->succ.end();
+         j != je; j++) {
+    }
+  }
 
-  // Do we need the constraints anymore now that they've been
-  // incorporated into the dfg?
-  delete cs;
+  for (int i = 1; i < parts->var_part.size(); i++) {
+    for (bitmap::iterator j = parts->var_part[i].begin(),
+           je = parts->var_part[i].end(); j != je; j++) {
+    }
+  }
 
-  // Partition variables in the dfg. Maybe this can be in dfg_from_constraints
-  // above.
-  dfg->partition();
-
-  // Incorporate interprocedural edges from the dfg.
-  graph->extend(dfg);
-
-  // Get rid of the dfg, we don't need it anymore.
-  delete dfg;
-  
-  // Return the final sparse representation.
-  return graph;
-  **/
+  for (n2g_iterator i = n2g.begin(), e = n2g.end(); i != e; i++) {
+    for (std::vector<u32> j = i->second.begin(), je = i->second.end();
+         j != je; j++) {      
+    }
+  }  
 }
 
-// Write the graph in the dot language to os.o
 void SEG::print(std::ostream &os) {
   // Start the graph wrapper.
   os << "strict digraph SEG {" << std::endl;

@@ -60,7 +60,7 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   //
   // Solve for anderson points-to sets.
   //
-  solve_anders_constraints(as, bdds);
+  AndersSolution *solution = solve_anders_constraints(as, bdds);
   
   // Step 10.
   //
@@ -96,7 +96,11 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   // Step 14.
   //
   // Destroy the AnalysisSet.
-  delete as;
+  //
+  // Weirdly we can't do this yet. There's some screwy state being used
+  // by the AndersSolution that we need to split out.
+  //
+  //delete as;
   delete proc;
   
   // Step 15.
@@ -127,7 +131,9 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   // Partition variables into equivalence classes.
   //
   //   SFS::partition_vars()
-    
+  ConstraintClasses cc();
+  Partitions *partitions = partition_variables(fas, &cc, solution);
+  
   // Step 18.
   //
   // Release all remaining memory structures not
@@ -138,7 +144,8 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   // Reduce the SEG into the data flow grph.
   //
   //   SFS::compute_seg()
-
+  
+  
   // Step 20.
   //
   // Solve the DFG

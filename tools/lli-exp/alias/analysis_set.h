@@ -28,7 +28,9 @@ class FlowAnalysisSet {
   bddPair *g_to_p;
   std::vector<bdd> bdd_off;
   std::vector<bdd> bdd_xlt;
+  
   std::map<u32, std::vector<u32> > global_to_dfg;
+  typedef std::map<u32, std::vector<u32> >::iterator global_to_dfg_iterator;
 
   std::vector<u32> defs;
   std::vector<u32> uses;  
