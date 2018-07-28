@@ -198,6 +198,20 @@ public:
   void extend(DFG *dfg);
 };
 
+void reset_all_nodes(SEG *seg) {
+  for (int j = 1; j < seg->nodes.size(); j++) {
+    SEGNode *node = seg->nodes[j];
+
+    node->is_pnode = true;
+    node->uses_relevant_def = false;
+    node->has_const_transfer_func = false;
+    node->del = false;
+    node->dfs_num = 0;
+    node->rep = MAX_U32;
+    node->succ.clear();
+  }
+}
+
 // This could in theory be put someplace else. The above methods
 // are supposed to be generic.
 SEG *build_constrait_based_seg(llvm::Module *m, u64 max_size);

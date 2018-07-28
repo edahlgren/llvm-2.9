@@ -300,99 +300,197 @@ void SEG::do_reduction() {
   t5.run(t6.pnode_rdefs);
 }
 
-void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
-                     ConstraintClasses *cc, Partitions *parts) {
+std::pair<u32, u32> mark_relevant_nodes(FlowAnalysisSet *fas, SEG *seg,
+                                        ConstraintClasses *cc, Partitions *parts,
+                                        bitmap rep_map,
+                                        std::vector<u32> &rst) {
 
-  std::vector<u32> rst;
+  u32 np = 0, r = 0;
+  for (bitmap::iterator i = rep_map.begin(), e = rep_map.end();
+       i != e; i++) {
 
-  std::map<u32, bitmap> n2g;
-  typedef map<u32, bitmap>::iterator n2g_iterator;
-  
-  std::map<u32, u32> pass_defs;
-  typedef std::map<u32, u32>::iterator pass_defs_iterator;
+    if (*i == 0) {
+      for (Partitions::var_part_iterator j = parts->var_part.begin(),
+             je = parts->var_part.end(); j != je; j++) {
+        assert(fas->global_to_dfg.count(*j));
+        cc->global_init.insert(cc->global_init.end(),
+                               fas->global_to_dfg[*j].begin(),
+                               fas->global_to_dfg[*j].end());
+      }
 
-  std::map<u32, u32> pass_node;
-  typedef std::map<u32, u32>::iterator pass_node_iterator;
+      np++;
+      seg->nodes[seg->start].is_pnode = false;
+      rst.push_back(seg->start);
+      
+      continue;
+    }
 
-  std::map<u32, std::vector<u32> > pass_uses;
-  typedef std::map<u32, std::vector<u32>>::iterator pass_uses_iterator;
+    for (Partitions::cons_part_iterator j = parts->cons_part.begin(),
+           je = parts->cons_part.end(); j != je; j++) {
+      Constraint &c = fas->dfg->node_cons(*j);
 
-  for (int i = 1; i < parts->var_part.size(); i++) {
-    u32 rep = parts->var_part[i].find_first();
-    u32 np = false, r = false;
+      if (c.type == ConstraintStore) {
+        cc->cons_store.push_back(*j);
 
-    for (Partitions::obj_to_cons_part_iterator j = parts->obj_to_cons_part.begin(),
-           je = parts->obj_to_cons_part.end(); j != je; j++) {
+        u32 st_idx = fas->dfg->st_idx(*j, false);
+        u32 n = fas->defs[st_idx];
 
-      if (*j == 0) {
-        for (Partitions::var_part_iterator k = parts->var_part.begin(),
-               ke = parts->var_part.end(); k != ke; k++) {
+        np++;
+        seg->nodes[n].is_pnode = false;
+
+        if (np <= 1 || r <= 1) {
+          rst.push_back(n);
         }
+
+        if (cc->cons_strong.count(*j)) {
+          seg->nodes[n].has_const_transfer_func = true;
+        }
+
+        continue;
+      }
+
+      assert(c.type == ConstraintLoad);
+      cc->cons_load.push_back(*j);
+
+      u32 ld_idx = fas->dfg->ld_idx(*j, false);
+      u32 n = fas->uses[ld_idx];
+
+      r++;
+      seg->nodes[n].uses_relevant_def = true;
+
+      if (np <= 1 || r <= 1) {
+        rst.push_back(n);
+      }
+    }    
+  }
+
+  return std::make_pair(np, r);
+}
+
+void organize_partitions(FlowAnalysisSet *fas, SEG *seg,
+                         ConstraintClasses *cc, Partitions *parts,
+                         std::map<u32, std::vector<u32> > &n2p,
+                         std::map<u32, bitmap> &n2g, SqueezeMap *sm,
+                         u32 partition, u32 num_np, u32 num_relevant) {
+
+  if (num_np == 1 && num_relevant > 1) {
+    process_1store(partition);
+  }
+
+  if (num_np > 0 && num_relevant == 1) {
+    process_1load(partition);
+  }
+  
+  for (std::vector<u32>::iterator i = cc->cons_load.begin(),
+         e = cc->cons_load.end(); i != e; i++) {
+    n2p[*i].push_back(partition);
+  }
+      
+  for (std::vector<u32>::iterator i = cc->cons_store.begin(),
+         e = cc->cons_store.end(); i != e; i++) {
+    n2p[*i].push_back(partition);
+  }
+
+  if (num_np <= 1) {
+    for (std::vector<u32>::iterator i = cc->cons_load.begin(),
+           e = cc->cons_load.end(); i != e; i++) {
+      n2g[*i].set(sm->squeeze(1, i));      
+    }
+    for (std::vector<u32>::iterator i = cc->cons_store.begin(),
+           e = cc->cons_store.end(); i != e; i++) {
+      n2g[*i].set(sm->squeeze(1, i));
+    }
+  } else {    
+    u32 k = 0;    
+    for (std::vector<u32>::iterator i = cc->cons_load.begin(),
+           e = cc->cons_load.end(); i != e; i++) {
+      n2g[*i].set(sm->squeeze(k, i));
+      k++;
+    }
+    for (std::vector<u32>::iterator i = cc->cons_store.begin(),
+           e = cc->cons_store.end(); i != e; i++) {
+      n2g[*i].set(sm->squeeze(k, i));
+      k++;
+    }
+  }
+
+  for (std::vector<u32>::iterator i = rst.begin(), e = rst.end();
+       i != e; i++) {
+    SEGNode *node = seg->nodes[*i];
+    node->is_pnode = true;
+    node->uses_relevant_def = false;
+    node->has_const_transfer_func = false;
+  }
+}
+
+void map_nodes_load_store_constraints(FlowAnalysisSet *fas, SEG *seg,
+                                      ConstraintClasses *cc, Partitions *parts,
+                                      std::map<u32, u32> &pass_defs,
+                                      std::map<u32, std::vector<u32> > &pass_uses,
+                                      std::map<u32, std::vector<u32> > &n2p,
+                                      u32 partition, bitmap rep_map) {
+
+  for (bitmap::iterator i = rep_map.begin(), e = rep_map.end();
+       i != e; i++) {
+    if (*i == 0) {
+      continue;
+    }
+
+    for (std::vector<u32>::iterator j = parts->cons_part[i].begin(),
+           je = parts->cons_part[i].end(); j != je; j++) {
+      
+      Constraints &c = fas->dfg->node_cons(*j);
+      if (c.type == ConstraintStore) {
+
+        u32 def = fas->defs[fas->dfg->st_idx(*j, false)];
+        u32 n = seg->get_rep_index(def);
+
+        if (!n || seg->nodes[n]->rep) {
+          continue;
+        }
+
+        pass_defs[n] = *j;
+        n2p[*j].push_back(partition);
         
         continue;
       }
 
-      for (Partitions::cons_part_iterator k = parts->cons_part.begin(),
-             ke = parts->cons_part.end(); k != ke; k++) {
-      }
-    }
+      u32 use = fas->uses[fas->dfg->ld_idx(*j, false)];
+      u32 n = seg->get_rep_index(use);
 
-    if (np <= 1 || r <= 1) {
-      for (std::vector<u32>::iterator j = cc->cons_load.begin(),
-             je = cc->cons_load.end(); j != je; j++) {
-      }
-      
-      for (std::vector<u32>::iterator j = cc->cons_store.begin(),
-             je = cc->cons_store.end(); j != je; j++) {
+      if (!n || seg->nodes[n]->rep) {
+        continue;
       }
 
-      for (std::vector<u32>::iterator j = rst.begin(), je = rst.end();
-           j != je; j++) {
-      }
+      pass_uses[n].push_back(*j);
+      n2p[*j].push_back(partition);
+    }    
+  }  
+}
 
-      continue;
-    }
+void process_def_uses(FlowAnalysisSet *fas, SEG *seg,
+                      ConstraintClasses *cc, Partitions *parts,
+                      std::map<u32, u32> &pass_defs,
+                      std::map<u32, std::vector<u32> > &pass_uses,
+                      std::map<u32, u32> &pass_node, u32 partition) {
 
-    T4 t4(seg);
-    t4.run();
-    
-    T2 t2(seg);
-    t2.run(t4.torder);
-    
-    T6 t6(seg);
-    t6.run(t4.rdefs);
-    
-    T5 t5(seg);
-    t5.run(t6.pnode_rdefs);
-
-    for (Partitions::obj_to_cons_part_iterator j = parts->obj_to_cons_part.begin(),
-           je = parts->obj_to_cons_part.end(); j != je; j++) {
-
-      for (Partitions::cons_part_iterator k = parts->cons_part.begin(),
-             ke = parts->cons_part.end(); k != ke; k++) {
-      }
-    }
-
-    for (pass_uses_iterator j = pass_uses.begin(), je = pass_uses.end();
-         j != je; j++) {
-    }
-
-    for (pass_defs_iterator j = pass_defs.begin(), je = pass_defs.end();
-         j != je; j++) {
-    }
-
-    for (int j = 1; j < seg->nodes.size(); j++) {
-    }
-
-    for (std::vector<u32>::iterator j = t4.torder.begin(), je = t4.torder.end();
-         j != je; j++) {
-    }
-
-    for (std::vector<u32>::iterator j = t5.new_reps.begin(), je = t5.new_reps.end();
-         j != je; j++) {      
+  for (pass_uses_iterator i = pass_uses.begin(), e = pass_uses.end();
+       i != e; i++) {
+    if (!pass_node.count(i->first)) {
+      process_seg(fas, seg, cc, parts, partition, i->second);
     }
   }
 
+  for (pass_defs_iterator i = pass_defs.begin(), e = pass_defs.end();
+       i != e; i++) {
+    if (!pass_node.count(i->first)) {
+      process_seg(fas, seg, cc, parts, partition, i->second);
+    }
+  }  
+}
+
+void determine_shared_points_to_graphs() {
+  std::hash_map<bitmap, u32> st;
   std::hash_map<bitmap, std::vector<u32> > ld;
   typedef std::hash_map<bitmap, std::vector<u32> >::iterator ld_iterator;
 
@@ -413,7 +511,9 @@ void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
     for (int j = 1; j < n.size(); j++) {
     }
   }
-  
+}
+
+void modify_edges_from_nodes_to_reps() {
   for (tp_it i = fas->dfg.tp_begin(), e = fas->dfg.tp_end(); i != e; ++i) {
     for (std::vector<u32>::iterator j = i->succ.begin(), je = i->succ.end();
          j != je; j++) {      
@@ -439,7 +539,9 @@ void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
          j != je; j++) {
     }
   }
+}
 
+void prep_points_to_sets_for_dfg_nodes() {
   for (int i = 1; i < parts->var_part.size(); i++) {
     for (bitmap::iterator j = parts->var_part[i].begin(),
            je = parts->var_part[i].end(); j != je; j++) {
@@ -451,6 +553,108 @@ void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
          j != je; j++) {      
     }
   }  
+}
+
+typedef map<u32, bitmap>::iterator n2g_iterator;
+typedef std::map<u32, u32>::iterator pass_defs_iterator;
+typedef std::map<u32, std::vector<u32> >::iterator pass_uses_iterator;
+typedef std::map<u32, u32>::iterator pass_node_iterator;
+
+void dfg_compute_seg(FlowAnalysisSet *fas, SEG *seg,
+                     ConstraintClasses *cc, Partitions *parts) {
+
+  std::vector<u32> rst;
+  std::vector<SEGNode *> savedSEG(seg->nodes);
+
+  std::map<u32, std::vector<u32> > n2p;
+  std::map<u32, bitmap> n2g;
+  
+  std::map<u32, u32> pass_defs;
+  std::map<u32, std::vector<u32> > pass_uses;
+  std::map<u32, u32> pass_node;
+
+  SqueezeMap *sm = new SqueezeMap();
+  
+  T4 *t4 = new T4(seg);
+  T2 *t2 = new T2(seg);
+  T6 *t6 = new T6(seg);
+  T5 *t5 = new T5(seg);
+  
+  for (int i = 1; i < parts->var_part.size(); i++) {
+    u32 rep = parts->var_part[i].find_first();
+    u32 num_np = 0, num_relevant = 0;
+
+    bitmap rep_map = parts->obj_to_cons_part[rep];
+    std::pair<u32, u32> r1 = mark_relevant_nodes(fas, seg, cc, parts,
+                                                 rep_map, rst);
+    num_np += r1->first;
+    num_relevant += r1->second;
+
+    if (num_np <= 1 || num_relevant <= 1) {
+      organize_partitions(fas, seg, cc, parts,
+                          n2p, n2g, sm, i,
+                          num_np, num_relevant);
+
+      rst.clear();
+      cc->global_init.clear();
+      cc->cons_load.clear();
+      cc->cons_store.clear();
+
+      continue;
+    }
+
+    t4->run();
+    t2->run(t4->torder);
+    t6->run(t4->rdefs);
+    t5->run(t6->pnode_rdefs);
+
+    map_nodes_load_store_constraints(fas, seg, cc, parts,
+                                     pass_defs, pass_uses,
+                                     n2p, i, rep_map);
+
+    process_def_uses(fas, seg, cc, parts,
+                     pass_defs, pass_uses, pass_nodes,
+                     partition);
+
+    cc->global_init.clear();
+    pass_defs.clear();
+    pass_uses.clear();
+    pass_node.clear();
+    
+    reset_all_nodes(seg);
+
+    for (std::vector<u32>::iterator j = t4->torder.begin(), je = t4->torder.end();
+         j != je; j++) {
+      seg->nodes[*j].pred = savedSEG[*j].pred;
+    }
+
+    for (std::vector<u32>::iterator j = t5->new_reps.begin(), je = t5->new_reps.end();
+         j != je; j++) {      
+      seg->nodes[*j].pred = savedSEG[*j].pred;
+    }
+
+    t4->reset();
+    t2->reset();
+    t6->reset();
+    t5->reset();
+  }
+
+  delete sm;
+  delete t4;
+  delete t2;
+  delete t6;
+  delete t5;
+  fas->defs.clear();
+  fas->uses.clear();
+  fas->global_to_dfg.clear();
+  cc->cons_part.clear();
+  cc->cons_strong.clear();
+
+  determine_shared_points_to_graphs();
+  
+  modify_edges_from_nodes_to_reps();
+
+  prep_points_to_sets_for_dfg_nodes();
 }
 
 void SEG::print(std::ostream &os) {

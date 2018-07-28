@@ -1,4 +1,5 @@
 class ConstraintClasses {
+  std::vector<u32> global_init;
   std::set<u32> cons_strong;
   std::vector<u32> cons_store;
   std::vector<u32> cons_load;  

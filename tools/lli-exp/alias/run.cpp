@@ -131,8 +131,8 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   // Partition variables into equivalence classes.
   //
   //   SFS::partition_vars()
-  ConstraintClasses cc();
-  Partitions *partitions = partition_variables(fas, &cc, solution);
+  ConstraintClasses *cc = new ConstraintClasses();
+  Partitions *partitions = partition_variables(fas, cc, solution);
   
   // Step 18.
   //
@@ -144,7 +144,11 @@ AnalysisResult *run_analysis(llvm::Module *m) {
   // Reduce the SEG into the data flow grph.
   //
   //   SFS::compute_seg()
-  
+  dfg_compute_seg(fas, seg, cc, parts);
+
+  // Drop things we don't need anymore.
+  delete cc;
+  delete seg;
   
   // Step 20.
   //
