@@ -15,3 +15,5 @@ add_llvm_tool(lli-exp
   trace.cpp
   write.cpp
 )
+
+add_subdirectory(aa)

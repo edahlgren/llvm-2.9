@@ -16,8 +16,8 @@
 #include <vector>  // for std::vector
 #include <utility> // for std::pair, std::make_pair
 
-typedef llvm::DenseMap<const llvm::StructType*,
-  std::pair<std::vector<u32>, std::vector<u32> >> StructInfoMap;
+typedef std::pair<std::vector<u32>, std::vector<u32>> StructInfo;
+typedef llvm::DenseMap<const llvm::StructType *, StructInfo> StructInfoMap;
 
 class Structs {
   // min_struct: 
@@ -45,6 +45,30 @@ class Structs {
   Structs() : min_struct(llvm::Type::Int8Ty),
     max_struct(llvm::Type::Int8Ty), max_struct_sz(0) {}
   
+  StructInfoMap::iterator _get_struct_info_iter(const llvm::StructType *st) {
+    assert(st);
+
+    StructInfoMap::iterator it= struct_info_map.find(st);
+    if(it != struct_info_map.end())
+      return it;
+
+    analyze(st);
+    return struct_info_map.find(st);
+  }
+
+  const StructInfo& get_info(const StructType *st){
+    return _get_struct_info_iter(st)->second;
+  }
+
+  const std::vector<u32>& get_sz(const StructType *st){
+    return _get_struct_info_iter(st)->second.first;
+  }
+
+  const std::vector<u32>& get_off(const StructType *st){
+    return _get_struct_info_iter(st)->second.second;
+  }
+  
+
   void analyze(const llvm::StructType *st) {
     assert(st);
   
