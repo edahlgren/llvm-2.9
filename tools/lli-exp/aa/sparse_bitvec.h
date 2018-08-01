@@ -23,7 +23,7 @@
 #include <algorithm>
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/MathExtras.h"
-#include <llvm/Support/Streams.h>
+#include <llvm/Support/raw_ostream.h>
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ilist.h"
 namespace llvm {
@@ -82,7 +82,7 @@ public:
   BitWord Bits[BITWORDS_PER_ELEMENT];
   // Needed for sentinels
   MySparseBitVectorElement() {
-    ElementIndex = ~0UL;
+    ElementIndex = ~0U;
     memset(&Bits[0], 0, BYTES_PER_ELEMENT);
   }
 
@@ -1182,7 +1182,7 @@ inline bool operator &=(MySparseBitVector<ElementSize> &LHS,
 
 // Dump a MySparseBitVector to a stream
 template <unsigned ElementSize>
-void dump(const MySparseBitVector<ElementSize> &LHS, llvm::OStream &out) {
+void dump(const MySparseBitVector<ElementSize> &LHS, llvm::raw_ostream &out) {
   out << "[ ";
 
   typename MySparseBitVector<ElementSize>::iterator bi;

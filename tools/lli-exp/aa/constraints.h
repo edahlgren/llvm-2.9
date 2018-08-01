@@ -9,6 +9,10 @@
 #ifndef CONSTRAINTS_H
 #define CONSTRAINTS_H
 
+#include "int.h"               // for u32
+#include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
+
+#include <set>    // for std::set
 #include <vector> // for std::vector
 
 // Types of constraints.
@@ -25,7 +29,7 @@ public:
   ConstraintType type;
   u32 dest, src, off;
 
-  Constraint(ConsType t, u32 d, u32 s, u32 o = 0) :
+  Constraint(ConstraintType t, u32 d, u32 s, u32 o = 0) :
     type(t), dest(d), src(s), off(o) {}
 
   bool operator == (const Constraint &b) const {
@@ -71,11 +75,11 @@ public:
 };
 
 class Constraints {
+ public:
   std::vector<Constraint> constraints;
-
   Constraints() {}
 
-  bool add(ConsType t, u32 dest, u32 src, u32 off = 0) {
+  bool add(ConstraintType t, u32 dest, u32 src, u32 off = 0) {
     assert(src && dest);
   
     if (t == ConstraintGEP && !off) {
@@ -92,7 +96,27 @@ class Constraints {
   }
 };
 
+namespace llvm{
+  template<> struct DenseMapInfo<Constraint> {
+    static Constraint getEmptyKey(){
+      return Constraint(ConstraintAddrOf, 0, 0, 0);
+    }
+    
+    static Constraint getTombstoneKey(){
+      return Constraint(ConstraintCopy, 0, 0, 0);
+    }
+    
+    static unsigned getHashValue(const Constraint &x){
+      return ((u32)x.type<<29) ^ (x.dest<<12) ^ x.src ^ x.off;
+    }
+    
+    static unsigned isEqual(const Constraint &x, const Constraint &y){
+      return x == y;
+    }
+  };
+}
+
 typedef std::pair<Constraint, std::set<llvm::Instruction *>> ConstraintInstSet;
-typedef llvm::DenseMap<Constraint, std::set<llvm::Instruction *> > ConstraintInstMap;
+typedef llvm::DenseMap<Constraint, std::set<llvm::Instruction *>> ConstraintInstMap;
 
 #endif // end CONSTRAINTS_H

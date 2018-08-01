@@ -5,7 +5,6 @@
 // Description ...
 //
 //===----------------------------------------------------------------------===//
-
 #include "llvm/Argument.h"        // for llvm::Argument
 #include "llvm/Constants.h"       // for llvm::ConstantExpr
 #include "llvm/DerivedTypes.h"    // for llvm::StructType, llvm::PointerType
@@ -14,14 +13,16 @@
 #include "llvm/GlobalVariable.h"  // for llvm::Type
 #include "llvm/Module.h"          // for llvm::Function
 #include "llvm/Type.h"            // for llvm::Type
+#include "llvm/TypeSymbolTable.h" // for llvm::TypeSymbolTable
 #include "llvm/Value.h"           // for llvm::Value
 #include "llvm/Support/Casting.h" // for llvm::dyn_cast, llvm::isa
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 
+#include "analysis_set.h"
 #include "constraints.h"
 #include "nodes.h"
 
-static bool is_address_taken(llvm::Value *v) const {
-
+static bool is_address_taken(llvm::Value *v) {
   assert(v);
 
   // Check the uses of this value.
@@ -35,23 +36,27 @@ static bool is_address_taken(llvm::Value *v) const {
         if (call_inst->getOperand(j) == v)
           return true;
       }
+      continue;
     }
 
     // Handle invoke instructions.
-    llvm::InvokeInst *invoke_isnt = llvm::dyn_cast<llvm::InvokeInst>(*i);
+    llvm::InvokeInst *invoke_inst = llvm::dyn_cast<llvm::InvokeInst>(*i);
     if (invoke_inst) {
       for(u32 j = 3, je = invoke_inst->getNumOperands(); j < je; ++j) {
         if (invoke_inst->getOperand(j) == v)
           return true;
       }
+      continue;
     }
 
     // Handle constant expressions.
     llvm::ConstantExpr *const_expr = llvm::dyn_cast<llvm::ConstantExpr>(*i);
     if (const_expr) {
       // Recurse.
-      if (escapes(const_expr))
+      if (is_address_taken(const_expr)) {        
         return true;
+      }
+      continue;
     }
 
     // Handle non-compare instructions.
@@ -63,26 +68,25 @@ static bool is_address_taken(llvm::Value *v) const {
 }
 
 static llvm::Argument *get_argv(llvm::Function *f) {
-  // There should always be at least one arg, the name of the function.
-  assert(f->arg_begin() != f->arg_end());
-  
-  llvm::Function::arg_iterator argv = f->arg_begin()++;
-  if (argv != f->arg_end()) {
-    return *argv;
+  u32 i = 0;
+  for (llvm::Function::arg_iterator arg_it = f->arg_begin(),
+         arg_end = f->arg_end(); arg_it != arg_end; arg_it++) {    
+    if (i == 1) {
+      return arg_it;
+    }
+    i++;
   }
   return nullptr;
 }
 
-static Value *get_envp(llvm::Function *f) {
-  // There should always be at least one arg, the name of the function.
-  assert(f->arg_begin() != f->arg_end());
-
-  llvm::Function::arg_iterator argv = f->arg_begin()++;
-  if (argv != f->arg_end()) {
-    llvm::Function::arg_iterator envp = argv++;
-    if (envp != f->arg_end()) {
-      return *envp;
+static llvm::Argument *get_envp(llvm::Function *f) {
+  u32 i = 0;
+  for (llvm::Function::arg_iterator arg_it = f->arg_begin(),
+         arg_end = f->arg_end(); arg_it != arg_end; arg_it++) {    
+    if (i == 2) {
+      return arg_it;
     }
+    i++;
   }
   return nullptr;
 }  
@@ -95,7 +99,7 @@ static void add_double_object_node(AnalysisSet *as,
   as->nodes.value_nodes[v] = value_node;
 
   u32 object_node = as->nodes.next;
-  as->nodes.next += 2;,
+  as->nodes.next += 2;
   as->nodes.nodes.push_back(new Node(v, 2 /* obj_sz */));
   as->nodes.nodes.push_back(new Node(v, 1 /* obj_sz */));
   as->nodes.object_nodes[v] = object_node;
@@ -116,7 +120,7 @@ static void add_entry_point_function_args(AnalysisSet *as,
   }
 }
 
-static void add_nonaddr_taken_function_args(Analysis *as,
+static void add_nonaddr_taken_function_args(AnalysisSet *as,
                                             llvm::Function *f) {
   
   // Step 1.
@@ -124,7 +128,7 @@ static void add_nonaddr_taken_function_args(Analysis *as,
   // Make a value node for each pointer argument.
   for (llvm::Function::arg_iterator arg_it = f->arg_begin(),
          arg_end = f->arg_end(); arg_it != arg_end; arg_it++) {
-    llvm::Argument *arg = *arg_it;
+    llvm::Argument *arg = arg_it;
     
     if (llvm::isa<llvm::PointerType>(arg->getType())) {
       u32 value_node = as->nodes.next++;
@@ -137,7 +141,7 @@ static void add_nonaddr_taken_function_args(Analysis *as,
   //
   // Make a return node if needed.
   if (llvm::isa<llvm::PointerType>(f->getReturnType())) {
-    u32 return_node = next++;
+    u32 return_node = as->nodes.next++;
     as->nodes.nodes.push_back(new Node(f));
     as->nodes.ret_nodes[f] = return_node;
   }
@@ -153,23 +157,25 @@ static void add_nonaddr_taken_function_args(Analysis *as,
 }
 
 static void add_addr_taken_function_args(AnalysisSet *as,
-                                         llvm::Function *f) {
-
+                                         llvm::Function *f,
+                                         u32 func_object_node) {
   // Step 1.
   //
   // Map all args to the function's obj node.
-  u32 last_ptr= ~0UL;
+  u32 last_ptr = OVERFLOW_U32;
   std::vector<llvm::Value *> args;
 
-  for (u32 i = 0, llvm::Function::arg_iterator arg_it = f->arg_begin(),
+  u32 i = 0;
+  for (llvm::Function::arg_iterator arg_it = f->arg_begin(),
          arg_end = f->arg_end(); arg_it != arg_end; i++, arg_it++) {
-    llvm::Argument *arg = *arg_it;
+    llvm::Argument *arg = arg_it;
     args.push_back(arg);
     
-    as->nodes.value_nodes[arg] = f_object_node + FUNC_NODE_OFF_ARG0 + i;
+    as->nodes.value_nodes[arg] =
+      func_object_node + FUNC_NODE_OFF_ARG0 + i;
     as->at_args.insert(arg);
     
-    if (llvm::isa<llvm::PointerType(arg->getType())) {
+    if (llvm::isa<llvm::PointerType>(arg->getType())) {
       last_ptr = i;
     }
   }
@@ -177,7 +183,7 @@ static void add_addr_taken_function_args(AnalysisSet *as,
   // Step 2.
   //
   // Map the return node.
-  assert(as->node.next == f_object_node + FUNC_NODE_OFF_RET);
+  assert(as->nodes.next == func_object_node + FUNC_NODE_OFF_RET);
   as->nodes.nodes.push_back(new Node(f, 1));
   as->nodes.next++;
 
@@ -185,8 +191,8 @@ static void add_addr_taken_function_args(AnalysisSet *as,
   //
   // Make object nodes for all args up to the last ptr.
   // Their values must be the args themselves (not the function).
-  assert(as->nodes.next == f_object_node + FUNC_NODE_OFF_ARG0);
-  if (last_ptr != ~0UL) {
+  assert(as->nodes.next == func_object_node + FUNC_NODE_OFF_ARG0);
+  if (last_ptr != OVERFLOW_U32) {
     for (u32 i = 0; i <= last_ptr; ++i){
       as->nodes.nodes.push_back(new Node(args[i], 1));
     }
@@ -204,8 +210,8 @@ static void add_addr_taken_function_args(AnalysisSet *as,
   // Step 5.
   //
   // Extend the object of f to include the nodes above.
-  as->nodes.nodes[f_object_node]->obj_sz =
-    as->nodes.next - f_object_node;
+  as->nodes.nodes[func_object_node]->obj_sz =
+    as->nodes.next - func_object_node;
 }
 
 static void handle_function(AnalysisSet *as,
@@ -228,27 +234,27 @@ static void handle_function(AnalysisSet *as,
     as->nodes.nodes.push_back(new Node(f, 1 /* obj_sz */));
     as->nodes.object_nodes[f] = f_object_node;
 
-    as->constraint.add(ConstraintAddrOf, f_value_node, f_object_node);
+    as->constraints.add(ConstraintAddrOf, f_value_node, f_object_node);
   }
 
   // Don't analyze external functions. They're handled at the call site.
-  if (as->ext_info->is_ext(f)) {
+  if (as->ext_info.is_ext(f)) {
     return;
   }
 
   // Treat the double-ptr args to main (argv and envp) as external vars.
   if (f->getNameStr() == "main") {
-    add_entry_point_function_args(this, f);
+    add_entry_point_function_args(as, f);
     return;
   }
 
   if (!address_taken) {
-    add_nonaddr_taken_function_args(this, f);
+    add_nonaddr_taken_function_args(as, f);
     return;
   }
 
   // If the address of the function *was* taken and this isn't main ...
-  add_addr_taken_function_args(this, f);
+  add_addr_taken_function_args(as, f, f_object_node);
 }
 
 static void handle_const_gep_using_value(AnalysisSet *as,
@@ -256,9 +262,9 @@ static void handle_const_gep_using_value(AnalysisSet *as,
 
   assert(v);
 
-  for (llvm::Value::use_iterator i = g->use_begin(); e = g->use_end();
+  for (llvm::Value::use_iterator i = v->use_begin(), e = v->use_end();
        i != e; i++) {
-    llvm::ConstantExpr *exp = llvm::dyn_cast<llvm::ConstantExpr>(*i);
+    llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(*i);
     if (expr) {
       if (expr->getOpcode() == llvm::Instruction::BitCast) {
         // Recurse.
@@ -284,8 +290,7 @@ static void handle_const_gep_using_value(AnalysisSet *as,
   }  
 }
 
-u32 Anders::compute_gep_off(llvm::User *u){
-
+u32 compute_gep_off(AnalysisSet *as, llvm::User *u){
   assert(u);
 
   u32 off = 0;
@@ -312,6 +317,12 @@ u32 Anders::compute_gep_off(llvm::User *u){
   return off;
 }
 
+u32 handle_global_initializer(AnalysisSet *as,
+                              llvm::Constant *c,
+                              u32 object_node,
+                              llvm::DenseMap<u32, u32> &glb_init,
+                              bool first);
+
 static void handle_const_gep_at(AnalysisSet *as,
                                 u32 value_node,
                                 llvm::DenseMap<u32, u32> &glb_init) {
@@ -319,8 +330,8 @@ static void handle_const_gep_at(AnalysisSet *as,
   llvm::Value *v = as->nodes.nodes[value_node]->val;
   llvm::ConstantExpr *expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(v);
 
-  assert(e);
-  assert(e->getOpcode() == llvm::Instruction::GetElementPtr);
+  assert(expr);
+  assert(expr->getOpcode() == llvm::Instruction::GetElementPtr);
 
   if (glb_init.count(value_node)) {
     return;
@@ -362,7 +373,7 @@ static void handle_const_gep_at(AnalysisSet *as,
     as->nodes.value_nodes[r] = value_node_r;
   }
 
-  u32 off = compute_gep_off(expr);
+  u32 off = compute_gep_off(as, expr);
   as->constraints.add(ConstraintGEP, value_node, value_node_r, off);
 
   if (nested) {
@@ -372,9 +383,8 @@ static void handle_const_gep_at(AnalysisSet *as,
   if (llvm::GlobalVariable *rg = llvm::dyn_cast<llvm::GlobalVariable>(r)) {
     if (rg->hasInitializer()) {
       u32 object_node_r = as->nodes.find_object_node(r);
-      handle_global_initializer(as, object_node_r,
-                                rg->getInitializer(),
-                                glb_init);
+      handle_global_initializer(as, rg->getInitializer(),
+                                object_node_r, glb_init, true);
     }
   }
 }
@@ -382,12 +392,12 @@ static void handle_const_gep_at(AnalysisSet *as,
 static void handle_global(AnalysisSet *as,
                           llvm::GlobalVariable *g) {
   
-  assert(v);
+  assert(g);
 
   // Step 1.
   //
   // Make a node for the global pointer.
-  u32 g_value_node = as->nodes.next_node++;
+  u32 g_value_node = as->nodes.next++;
   as->nodes.nodes.push_back(new Node(g));
   as->nodes.value_nodes[g] = g_value_node;
 
@@ -404,16 +414,16 @@ static void handle_global(AnalysisSet *as,
   // Step 3.
   //
   // Create the global object.
-  u32 g_object_node = as->nodes.next_node++;
+  u32 g_object_node = as->nodes.next++;
   as->nodes.object_nodes[g] = g_object_node;
 
   const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(typ);
   if (st) {
-    const std::vector<u32> &sz = get_struct_sz(st);
-    for (int i = 0; i < sz.size(); i++) {
+    const std::vector<u32> &sz = as->structs.get_sz(st);
+    for (unsigned int i = 0; i < sz.size(); i++) {
       as->nodes.nodes.push_back(new Node(g, sz[i], is_array));
     }
-    as->nodes.next_node += sz.size();
+    as->nodes.next += sz.size();
 
     // A struct may be used in a constant GEP expression.
     handle_const_gep_using_value(as, g);
@@ -426,19 +436,19 @@ static void handle_global(AnalysisSet *as,
 
   // Not a struct, just add the object node above.
   as->nodes.nodes.push_back(new Node(g, 1, is_array));
-  as->nodes.next_node++;
+  as->nodes.next++;
 
   // An array may be used in a constant GEP expression.
   if (is_array)
     handle_const_gep_using_value(as, g);
 
-  as->constraint.add(ConstraintAddrOf,
+  as->constraints.add(ConstraintAddrOf,
                      g_value_node,
                      g_object_node);
 }
 
 static llvm::Constant *strip_bitcasts(llvm::Constant *c) {
-  for (llvm::ConstExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
+  for (llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
        expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(c)) {
     switch (expr->getOpcode()) {
     case llvm::Instruction::BitCast:
@@ -449,27 +459,24 @@ static llvm::Constant *strip_bitcasts(llvm::Constant *c) {
     case llvm::Instruction::PtrToInt:
     case llvm::Instruction::GetElementPtr:
       return c;
-
-    default:
     }
   }
   
   return c;
 }
 
-static void handle_global_initializer(AnalysisSet *as,
-                                      llvm::Constant *c,
-                                      u32 object_node,
-                                      llvm::DenseMap<u32, u32> *glb_init,
-                                      bool first = true) {
-
+u32 handle_global_initializer(AnalysisSet *as,
+                              llvm::Constant *c,
+                              u32 object_node,
+                              llvm::DenseMap<u32, u32> &glb_init,
+                              bool first) {
   assert(object_node && c);
 
   // Step 1.
   //
   // Have we already initialized it? Then just return it.
-  llvm::DenseMap<u32, u32>::iterator g_it = glb_init->find(object_node);
-  if (g_it != glb_init->end()) {
+  llvm::DenseMap<u32, u32>::iterator g_it = glb_init.find(object_node);
+  if (g_it != glb_init.end()) {
     return g_it->second;
   }
 
@@ -482,23 +489,23 @@ static void handle_global_initializer(AnalysisSet *as,
   // Step 3.
   //
   // Handle IntToPtr and PtrToInt instructions.  
-  llvm::ConstExpr *const_expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
-  switch (const_expr->getOpcode()) {
-  case llvm::Instruction::IntToPtr:
-    // We don't trace int->ptr for globals.
-    c = 0;
-    break;
+  llvm::ConstantExpr *const_expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
+  if (const_expr) {
+    switch (const_expr->getOpcode()) {
+    case llvm::Instruction::IntToPtr:
+      // We don't trace int->ptr for globals.
+      c = 0;
+      break;
     
-  case llvm::Instruction::PtrToInt:
-    // Exit on a ptr->int instruction.
-    if (first) {
-      glb_init[object_node] = 1;
+    case llvm::Instruction::PtrToInt:
+      // Exit on a ptr->int instruction.
+      if (first) {
+        glb_init[object_node] = 1;
+      }
+      
+      // Why don't we add a constraint here?
+      return 1;
     }
-
-    // Why don't we add a constraint here?
-    return 1;
-
-  default:
   }
 
   // Step 4.
@@ -509,7 +516,7 @@ static void handle_global_initializer(AnalysisSet *as,
       glb_init[object_node] = 1;
     }
 
-    as->constraints.add(ConstraintAddrOf, object_node, UnknownTarget);
+    as->constraints.add(ConstraintAddrOf, object_node, NodeUnknownTarget);
     return 1;
   }
 
@@ -543,7 +550,8 @@ static void handle_global_initializer(AnalysisSet *as,
     llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(c);
     if (!expr) {
       u32 object_node_const = as->nodes.find_object_node(c);
-      as->constraint.add(ConstraintAddrOf, object_node, object_node_const);
+      as->constraints.add(ConstraintAddrOf, object_node,
+                          object_node_const);
 
       if (first) {
         glb_init[object_node] = 1;
@@ -555,14 +563,14 @@ static void handle_global_initializer(AnalysisSet *as,
     // Not found?
     u32 value_node_expr = as->nodes.find_value_node(expr, 1);
     if (!value_node_expr) {
-      value_node_expr = next_node++;
+      value_node_expr = as->nodes.next++;
       as->nodes.nodes.push_back(new Node(expr));
       as->nodes.value_nodes[expr] = value_node_expr;
     }
 
     // Initialize and return.
-    handle_const_gep(value_node_expr);
-    as->constraint.add(ConstraintCopy, object_node, value_node_expr);
+    handle_const_gep_at(as, value_node_expr, glb_init);
+    as->constraints.add(ConstraintCopy, object_node, value_node_expr);
     
     if (first) {
       glb_init[object_node] = 1;
@@ -577,9 +585,9 @@ static void handle_global_initializer(AnalysisSet *as,
   llvm::ConstantStruct *cs = llvm::dyn_cast<llvm::ConstantStruct>(c);
   if (cs) {
     u32 off = 0;
-    for (int i = 0; i < cs->getNumOperands(); i++) {
+    for (unsigned int i = 0; i < cs->getNumOperands(); i++) {
       // Recurse.
-      off += handle_global_initializer(c->getOperand(i),
+      off += handle_global_initializer(as, cs->getOperand(i),
                                        object_node + off,
                                        glb_init, false);
     }
@@ -598,8 +606,8 @@ static void handle_global_initializer(AnalysisSet *as,
   assert(ca && "unexpected multi-value constant");
 
   u32 off = 0;
-  for (int i = 0; i < ca->getNumOperands(); i++) {
-    off = handle_global_initializer(ca->getOperand(i),
+  for (unsigned int i = 0; i < ca->getNumOperands(); i++) {
+    off = handle_global_initializer(as, ca->getOperand(i),
                                     object_node,
                                     glb_init, false);
   }
@@ -629,9 +637,9 @@ void AnalysisSet::init(llvm::Module *m) {
                       NodeConstToUnknownTarget,
                       NodeUnknownTarget);
     }
-    nodes.push_back(new Node);
+    nodes.nodes.push_back(new Node);
   }
-  nodes.nodes->next = NodeFirst;
+  nodes.next = NodeFirst;
 
   // Step 2.
   //
@@ -641,7 +649,7 @@ void AnalysisSet::init(llvm::Module *m) {
        i != e; i++) {
     const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(i->second);
     if (st) {
-      structs.analyze(this, st);
+      structs.analyze(st);
     }
   }
 
@@ -649,12 +657,10 @@ void AnalysisSet::init(llvm::Module *m) {
   //
   // Add constraints for functions pointers, function args, and function
   // return values;
-  for (llvm::Module::iterator i = m->begin(); e = m->end(); i != e; i++) {
+  for (llvm::Module::iterator i = m->begin(), e = m->end(); i != e; i++) {
     handle_function(this, (llvm::Function *)i);
   }
 
-  llvm::DenseMap<u32, u32> globals_initialized;
-  
   // Step 4.
   //
   // Add constraints for globals. This might include adding constraints
@@ -664,25 +670,27 @@ void AnalysisSet::init(llvm::Module *m) {
     handle_global(this, (llvm::GlobalVariable *)i);
   }
   
+  llvm::DenseMap<u32, u32> glb_init;
+  
   // Step 5.
   //
   // Initialize globals (separately from Step 4). This is because an
   // initializer may refer to a global below it.
   for (llvm::Module::global_iterator i = m->global_begin(), e = m->global_end();
        i != e; i++) {
-    llvm::GlobalVariable *g = *i;
+    llvm::GlobalVariable *g = i;
     if (g->hasInitializer()) {
       u32 object_node = nodes.object_nodes[g];
       handle_global_initializer(this, g, object_node,
-                                &globals_initialized);
+                                glb_init, true);
     }
   }
 
   // Step 6.
   //
   // Initialize the GEP constant expressions.
-  for (int i = 0; i < nodes.const_gep_nodes.size(); i++) {
+  for (unsigned int i = 0; i < nodes.const_gep_nodes.size(); i++) {
     u32 value_node = nodes.const_gep_nodes[i];
-    handle_const_gep_at(this, value_node, &globals_initialized);
+    handle_const_gep_at(this, value_node, glb_init);
   }
 }

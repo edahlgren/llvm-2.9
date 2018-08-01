@@ -14,6 +14,9 @@
 #include "structs.h"     // for Structs
 #include "ext.h"         // ExtInfo
 
+#include "llvm/ADT/DenseSet.h" // for llvm::DenseSet
+#include "llvm/Module.h"       // for llvm::Function
+
 #include <set> // for std::set
 
 class AnalysisSet {
@@ -33,7 +36,7 @@ class AnalysisSet {
   }
 
  private:
-  init(llvm::Module *m);
+  void init(llvm::Module *m);
 };
 
 #define FUNC_NODE_OFF_RET 1

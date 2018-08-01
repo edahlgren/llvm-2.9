@@ -9,6 +9,7 @@
 #include "cfg.h"
 #include "trace.h"
 #include "write.h"
+#include "aa/analysis_set.h"
 
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
@@ -151,6 +152,9 @@ int main(int argc, char **argv, char * const *envp) {
   // Delete the graph when we're done.
   delete fg;
 
+  AnalysisSet *as = new AnalysisSet(m);
+  delete as;
+  
   // Success.
   exit(0);
 }

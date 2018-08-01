@@ -1,16 +1,14 @@
-##===- tools/lli/Makefile ------------------------------*- Makefile -*-===##
-# 
+##===- tools/lli-exp/aa/Makefile -- -------------------*- Makefile -*-===##
+#
 #                     The LLVM Compiler Infrastructure
 #
 # This file is distributed under the University of Illinois Open Source
 # License. See LICENSE.TXT for details.
-# 
+#
 ##===----------------------------------------------------------------------===##
 
-LEVEL    := ../..
-TOOLNAME := lli-exp
-USEDLIBS := lli-alias
-LINK_COMPONENTS := ipa mcjit jit interpreter nativecodegen bitreader asmparser selectiondag
+LEVEL = ../../..
+LIBRARYNAME = lli-alias
+USEDLIBS =
 
-# Enable JIT support
 include $(LEVEL)/Makefile.common

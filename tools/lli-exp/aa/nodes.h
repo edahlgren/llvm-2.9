@@ -9,18 +9,22 @@
 #ifndef NODES_H
 #define NODES_H
 
+#include "bitmap.h" // local
+#include "int.h"    // u32
+
 #include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
 #include "llvm/Module.h"       // for llvm::Function
 #include "llvm/Value.h"        // for llvm::Value
 
 #include "bdd.h"    // from libbdd-dev
-#include "bitmap.h" // local
 
 #include <vector> // for std::vector
 #include <set>    // for std::set
 
-#define MAX_U32				(u32)-1
-#define NODE_RANK_MIN	0xf0000000;
+// Remap to a convenient type name.
+typedef unsigned int u32;
+
+#define NODE_RANK_MIN	0xf0000000
 
 enum SpecialNodes {
   NodeNone = 0,           // no node, used for errors?
@@ -65,8 +69,7 @@ public:
   bitmap store_from;
   bitmap gep_to;
 
-
- Node(Value *v= 0, u32 s= 0, bool w= 0):
+ Node(llvm::Value *v = 0, u32 s = 0, bool w = 0) :
     val(v), obj_sz(s), vtime(0),
     rep(NODE_RANK_MIN), nonptr(0), weak(w) {}
 
@@ -94,11 +97,12 @@ public:
     u32 &r0= nodes[i]->rep;
     if(r0 >= NODE_RANK_MIN) {
       //If i has a rank, it is the rep.
-      return n;
+      return r0;
     }
     
     //Recurse on the parent to get the real rep.
     u32 r= this->rep(r0);
+
     // Set i's parent to the rep
     r0 = r;
     return r;

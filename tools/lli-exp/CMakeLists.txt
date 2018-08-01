@@ -4,6 +4,10 @@ set(LLVM_REQUIRES_RTTI 1)
 
 set(LLVM_LINK_COMPONENTS ipa mcjit jit interpreter nativecodegen bitreader asmparser selectiondag)
 
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
+add_subdirectory(aa)
+
 add_llvm_tool(lli-exp
   lli-exp.cpp
   analysis.cpp
@@ -16,4 +20,4 @@ add_llvm_tool(lli-exp
   write.cpp
 )
 
-add_subdirectory(aa)
+target_link_libraries(lli-exp lli-alias)

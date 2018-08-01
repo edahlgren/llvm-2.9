@@ -10,43 +10,43 @@
 #define EXT_H
 
 #include "llvm/ADT/StringMap.h" // for llvm::StringMap
-#include "llvm/Module.h"       // for llvm::Function
+#include "llvm/Module.h"        // for llvm::Function
 
-#include <ext/hash_map> // hash_map
-#include <set>          // std::set
+#include <unordered_map> // std::unordered_map (hash map)
+#include <set>           // std::set
 
 enum ExternalFunctionType {
-  EFT_NOOP= 0,      //no effect on pointers
-  EFT_ALLOC,        //returns a ptr to a newly allocated object
-  EFT_REALLOC,      //like L_A0 if arg0 is a non-null ptr, else ALLOC
-  EFT_NOSTRUCT_ALLOC, //like ALLOC but only allocates non-struct data
-  EFT_STAT,         //retval points to an unknown static var X
-  EFT_STAT2,        //ret -> X -> Y (X, Y - external static vars)
-  EFT_L_A0,         //copies arg0, arg1, or arg2 into LHS
+  EFT_NOOP= 0,        // no effect on pointers
+  EFT_ALLOC,          // returns a ptr to a newly allocated object
+  EFT_REALLOC,        // like L_A0 if arg0 is a non-null ptr, else ALLOC
+  EFT_NOSTRUCT_ALLOC, // like ALLOC but only allocates non-struct data
+  EFT_STAT,           // retval points to an unknown static var X
+  EFT_STAT2,          // ret -> X -> Y (X, Y - external static vars)
+  EFT_L_A0,           // copies arg0, arg1, or arg2 into LHS
   EFT_L_A1,
   EFT_L_A2,
   EFT_L_A8,
-  EFT_L_A0__A0R_A1R,  //copies the data that arg1 points to into the location
-                      //  arg0 points to; note that several fields may be
-                      //  copied at once if both point to structs.
-                      //  Returns arg0.
-  EFT_A1R_A0R,      //copies *arg0 into *arg1, with non-ptr return
-  EFT_A3R_A1R_NS,   //copies *arg1 into *arg3 (non-struct copy only)
-  EFT_A1R_A0,       //stores arg0 into *arg1
-  EFT_A2R_A1,       //stores arg1 into *arg2
-  EFT_A4R_A1,       //stores arg1 into *arg4
-  EFT_L_A0__A2R_A0, //stores arg0 into *arg2 and returns it
-  EFT_A0R_NEW,      //stores a pointer to an allocated object in *arg0
-  EFT_A1R_NEW,      //as above, into *arg1, etc.
+  EFT_L_A0__A0R_A1R,  // copies the data that arg1 points to into the location
+                      //   arg0 points to; note that several fields may be
+                      //   copied at once if both point to structs.
+                      //   Returns arg0.
+  EFT_A1R_A0R,        // copies *arg0 into *arg1, with non-ptr return
+  EFT_A3R_A1R_NS,     // copies *arg1 into *arg3 (non-struct copy only)
+  EFT_A1R_A0,         // stores arg0 into *arg1
+  EFT_A2R_A1,         // stores arg1 into *arg2
+  EFT_A4R_A1,         // stores arg1 into *arg4
+  EFT_L_A0__A2R_A0,   // stores arg0 into *arg2 and returns it
+  EFT_A0R_NEW,        // stores a pointer to an allocated object in *arg0
+  EFT_A1R_NEW,        // as above, into *arg1, etc.
   EFT_A2R_NEW,
   EFT_A4R_NEW,
   EFT_A11R_NEW,
-  EFT_OTHER         //not found in the list
+  EFT_OTHER           // not found in the list
 };
 
 struct ei_pair {
   const char *n;
-  extf_t t;
+  ExternalFunctionType t;
 };
 
 static const ei_pair ei_pairs [] = {
@@ -149,17 +149,18 @@ static const ei_pair ei_pairs [] = {
 };
 
 class ExtInfo {
-  // Each function name is mapped to its extf_t.
+ public:
+  // Each function name is mapped to its ExternalFunctionType.
   llvm::StringMap<ExternalFunctionType> info;
 
   // Cache of is_ext results for all functions.
-  hash_map<const llvm::Function *, bool> cache;
+  std::unordered_map<const llvm::Function *, bool> cache;
 
   ExtInfo() {
     std::set<ExternalFunctionType> seen;
     ExternalFunctionType prev = EFT_NOOP;
     seen.insert(prev);
-    for (const ei_pair *p = external_function_database; p->n; ++p) {
+    for (const ei_pair *p = ei_pairs; p->n; ++p) {
       if (p->t != prev) {
         assert(!seen.count(p->t));
         seen.insert(p->t);
@@ -173,42 +174,45 @@ class ExtInfo {
     cache.clear();
   }
 
-  extf_t get_type(const Function *f) const {
+  ExternalFunctionType get_type(const llvm::Function *f) const {
     llvm::StringMap<ExternalFunctionType>::const_iterator i =
-      info.find(f->getNameStart());
+      info.find(f->getNameStr());
+    
     if (i == info.end())
       return EFT_OTHER;
     else
       return i->second;
   }
 
-  bool has_static(const Function *F) const {
+  bool has_static(const llvm::Function *f) const {
     // TODO: implement
     return false;
   }
   
-  bool has_static2(const Function *F) const {
+  bool has_static2(const llvm::Function *f) const {
     // TODO: implement
     return false;
   }
 
-  bool is_alloc(const Function *F) const {
+  bool is_alloc(const llvm::Function *f) const {
     // TODO: implement
     return false;
   }
 
-  bool no_struct_alloc(const Function *F) const {
+  bool no_struct_alloc(const llvm::Function *f) const {
     // TODO: implement
     return false;
   }
 
-  bool is_noop(const Function *F) const {
+  bool is_noop(const llvm::Function *f) const {
     // TODO: implement
     return false;
   }
-  bool is_ext(const Function *F) {
+  bool is_ext(const llvm::Function *f) {
     //Check the cache first; everything below is slower.
-    hash_map<const Function *, bool>::iterator i = this->cache.find(f);
+    std::unordered_map<const llvm::Function *, bool>::iterator i =
+      this->cache.find(f);
+    
     if (i != this->cache.end()) {
       return i->second;
     }
@@ -223,6 +227,7 @@ class ExtInfo {
         || t == EFT_NOSTRUCT_ALLOC
         || t == EFT_NOOP;
     }
+    
     this->cache[f] = res;
     return res;
   }

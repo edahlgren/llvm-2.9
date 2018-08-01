@@ -9,8 +9,11 @@
 #ifndef STRUCTS_H
 #define STRUCTS_H
 
+#include "int.h"  // for u32
+
 #include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
 #include "llvm/DerivedTypes.h" // for llvm::StructType
+#include "llvm/LLVMContext.h"  // for llvm::getGlobalContext
 #include "llvm/Type.h"         // for llvm::Type
 
 #include <vector>  // for std::vector
@@ -20,6 +23,7 @@ typedef std::pair<std::vector<u32>, std::vector<u32>> StructInfo;
 typedef llvm::DenseMap<const llvm::StructType *, StructInfo> StructInfoMap;
 
 class Structs {
+ public:
   // min_struct: 
   //   When there are no structs, max_struct is assigned
   //   the smallest type.
@@ -42,8 +46,10 @@ class Structs {
   //   the expanded struct.
   StructInfoMap struct_info_map;
 
-  Structs() : min_struct(llvm::Type::Int8Ty),
-    max_struct(llvm::Type::Int8Ty), max_struct_sz(0) {}
+  Structs() :
+    min_struct(llvm::Type::getInt8Ty(llvm::getGlobalContext())),
+    max_struct(llvm::Type::getInt8Ty(llvm::getGlobalContext())),
+    max_struct_sz(0) {}
   
   StructInfoMap::iterator _get_struct_info_iter(const llvm::StructType *st) {
     assert(st);
@@ -56,15 +62,15 @@ class Structs {
     return struct_info_map.find(st);
   }
 
-  const StructInfo& get_info(const StructType *st){
+  const StructInfo& get_info(const llvm::StructType *st){
     return _get_struct_info_iter(st)->second;
   }
 
-  const std::vector<u32>& get_sz(const StructType *st){
+  const std::vector<u32>& get_sz(const llvm::StructType *st){
     return _get_struct_info_iter(st)->second.first;
   }
 
-  const std::vector<u32>& get_off(const StructType *st){
+  const std::vector<u32>& get_off(const llvm::StructType *st){
     return _get_struct_info_iter(st)->second.second;
   }
   
@@ -100,7 +106,7 @@ class Structs {
           nst_it = this->struct_info_map.find(nst);
         }      
       
-        const std::vector<u32> &sz_element = nst->second.first;
+        const std::vector<u32> &sz_element = get_sz(nst);
         num_fields += sz_element.size();
       
         // Copy the nested struct's info, whose element 0 is the size of the
