@@ -27,10 +27,10 @@ typedef unsigned int u32;
 #define NODE_RANK_MIN	0xf0000000
 
 enum SpecialNodes {
-  NodeNone = 0,           // no node, used for errors?
+  NodeNone = 0,             // no node, used for errors?
   NodeUnknownTarget,        // unknown target of pointers cast from int (i2p)
   NodeConstToUnknownTarget, // const pointer to 1 (p_i2p)
-  NodeFirst,            // first node representing a real variable
+  NodeFirst,                // first node representing a real variable
 };
 
 class Node {
@@ -42,15 +42,19 @@ public:
   //
   // * Number of nodes in the object that starts here (0 if it's not an obj node).
   u32 obj_sz;
+
   // * The time this node was last visited
   u32 vtime;
+
   // * If rep < node_rank_min, this node is part of a set of equivalent nodes
   //     and (rep) is another node in that set.
   //   else this is the representative node of the set,
   //     and (rep) is its rank in the union-find structure.
   u32 rep;
+
   // * True if this node was determined to not point to anything
   bool nonptr;
+
   // * True if this is an array or is heap-allocated.
   bool weak;
 
@@ -58,12 +62,14 @@ public:
   //
   // * The nodes in our points-to set.
   bdd points_to;
+
   // * The points_to set at the start of the last visit to this node.
   bdd prev_points_to;
 
   // The simple constraint edges:
   //
   bitmap copy_to;
+
   // * Indices into cplx_cons for load, store, and gep cons.
   bitmap load_to;
   bitmap store_from;
@@ -82,14 +88,16 @@ class Nodes {
 public:
   u32 next;
   std::vector<Node *> nodes;
-  
+
+  // Map values to their node ID.
   llvm::DenseMap<llvm::Value*, u32> value_nodes;
+
+  // Map values to the first node ID of its object,
+  // (if it has an object).
   llvm::DenseMap<llvm::Value*, u32> object_nodes;
   
   llvm::DenseMap<llvm::Function*, u32> ret_nodes;
   llvm::DenseMap<llvm::Function*, u32> vararg_nodes;
-
-  std::vector<u32> const_gep_nodes;
   
   Nodes() {}
 
@@ -106,6 +114,25 @@ public:
     // Set i's parent to the rep
     r0 = r;
     return r;
+  }
+
+  u32 add_value(llvm::Value *v) {
+    u32 id = nodes.size();
+    nodes.push_back(new Node(v));
+    value_nodes[v] = id;
+    return id;
+  }
+
+  u32 add_object(llvm::Value *v, u32 obj_sz = 1, bool weak = false) {
+    u32 id = nodes.size();
+    nodes.push_back(new Node(v, obj_sz, weak));
+    object_nodes[v] = id;
+    return id;
+  }
+
+  u32 find_or_add_value_node(llvm::Value *v) const {
+    // TODO: implement.
+    return 0;
   }
 
   u32 find_value_node(llvm::Value *v, bool allow_null = false) const {

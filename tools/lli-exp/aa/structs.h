@@ -19,116 +19,133 @@
 #include <vector>  // for std::vector
 #include <utility> // for std::pair, std::make_pair
 
-typedef std::pair<std::vector<u32>, std::vector<u32>> StructInfo;
-typedef llvm::DenseMap<const llvm::StructType *, StructInfo> StructInfoMap;
+// StructEmbeddedInfo contains information about embedded
+// structures.
+//
+// Note: The expanded version of a structure is where all of
+// the embedded fields are raised up (i.e. "flattened") into
+// the struct.
+struct StructEmbeddedInfo {
+  // For each field i in the struct, num_embedded_elements[i]
+  // is the number of fields embedded in field i. For example:
+  //
+  //   + If field i is a struct:
+  //       Then num_embedded_elements[i] is the number of fields of
+  //       the largest structure embedded here (might be the
+  //       struct at field i or another struct it contains).
+  //
+  //   + If field i is an array:
+  //       Then num_embedded_elements[i] is 1. This treats arrays
+  //       as a single elements of its type.
+  //
+  //   + If field i is anything else:
+  //       Then num_embedded_elements[i] is 1 because the field is
+  //       a simple type.
+  //
+  // Special case: field 0
+  //
+  //   A pointer to the first field of a struct can mean a pointer
+  //   to all of the struct. So num_embedded_fields[0] always
+  //   contains the number of elements of the expanded version of
+  //   the struct.
+  std::vector<u32> num_embedded_fields;
 
+  // For each field i in the struct, offset[i] is the offset of
+  // field i in the expanded version of the structure.
+  std::vector<u32> offsets;
+};
+
+// Structs lazily builds and caches StructEmbeddedInfo.
 class Structs {
  public:
-  // min_struct: 
-  //   When there are no structs, max_struct is assigned
-  //   the smallest type.
-  // max_struct:
-  //   The struct type with the most fields (or min_struct
-  //   if no structs are found).
-  // max_struct_sz:
-  //   The # of fields in max_struct (0 for min_struct).
-  const llvm::Type *const min_struct;
+  // The expanded struct type with the most number of fields.
   const llvm::Type* max_struct;
+
+  // The number of fields in the expanded version of max_struct.
   u32 max_struct_sz;
   
-  // Every struct type is mapped to vectors S (first) and O (second):
-  //
-  // * If field [i] in the expanded struct type begins an embedded struct,
-  //   then S[i] is the # of fields in the largest such struct, else S[i] = 1.
-  // * S[0] is always the size of the expanded struct T, since a pointer to
-  //   the first field of T can mean all of T.
-  // * If a field has index (j) in the original struct, it has index O[j] in
-  //   the expanded struct.
+  // This maps structure types to information about their embedded
+  // structures.
+  typedef llvm::DenseMap<const llvm::StructType *, StructEmbeddedInfo>
+    StructInfoMap;
   StructInfoMap struct_info_map;
 
   Structs() :
-    min_struct(llvm::Type::getInt8Ty(llvm::getGlobalContext())),
     max_struct(llvm::Type::getInt8Ty(llvm::getGlobalContext())),
     max_struct_sz(0) {}
-  
-  StructInfoMap::iterator _get_struct_info_iter(const llvm::StructType *st) {
-    assert(st);
 
-    StructInfoMap::iterator it= struct_info_map.find(st);
-    if(it != struct_info_map.end())
-      return it;
-
-    analyze(st);
-    return struct_info_map.find(st);
-  }
-
-  const StructInfo& get_info(const llvm::StructType *st){
-    return _get_struct_info_iter(st)->second;
-  }
-
+  // Returns the number of embedded fields for each field in st.
   const std::vector<u32>& get_sz(const llvm::StructType *st){
-    return _get_struct_info_iter(st)->second.first;
+    return get_info(st).num_embedded_fields;
   }
 
+  // Returns the offset of each field in the expanded version
+  // of st.
   const std::vector<u32>& get_off(const llvm::StructType *st){
-    return _get_struct_info_iter(st)->second.second;
+    return get_info(st).offsets;
   }
   
-
-  void analyze(const llvm::StructType *st) {
+  // Return and cache the StructEmbeddedInfo of st.
+  const StructEmbeddedInfo& get_info(const llvm::StructType *st) {
     assert(st);
-  
-    if (this->struct_info_map.count(st)) {
-      // Skip if the struct type is already present.
-      return;
+
+    // Is it cached?
+    StructInfoMap::iterator cached_it = struct_info_map.find(st);
+    if (cached_it != struct_info_map.end()) {
+      return cached_it->second;
     }
-  
-    u32 num_fields = 0;
-    std::vector<u32> sz, off;
-  
+
+    StructEmbeddedInfo info;
+    u32 expanded_num_fields = 0;
+
     for (llvm::StructType::element_iterator i = st->element_begin(),
            e = st->element_end(); i != e; ++i){
       const llvm::Type *et= *i;
 
-      // Treat an array field as a single element of its type.
+      // The offset of this element is after all of the previous
+      // expanded fields.
+      info.offsets.push_back(expanded_num_fields);
+      
+      // Handle arrays.
       while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(et))
         et = at->getElementType();
 
-      // The offset is where this element will be placed in the exp. struct.
-      off.push_back(num_fields);
-    
-      // Process nested struct.
-      if (const llvm::StructType *nst = llvm::dyn_cast<llvm::StructType>(et)) {
-        StructInfoMap::iterator nst_it = this->struct_info_map.find(nst);
-        if (nst_it == this->struct_info_map.end()) {
-          // Recurse.
-          this->analyze(nst);
-          nst_it = this->struct_info_map.find(nst);
-        }      
-      
-        const std::vector<u32> &sz_element = get_sz(nst);
-        num_fields += sz_element.size();
-      
-        // Copy the nested struct's info, whose element 0 is the size of the
-        // nested struct itself.
-        for (u32 j = 0; j < sz_element.size(); j++) {
-          sz.push_back(sz_element[j]);
-        }      
-      } else{
-        // Process a simple type.
-        sz.push_back(1);
-        num_fields++;
+      // Handle structs.
+      const llvm::StructType *nst = llvm::dyn_cast<llvm::StructType>(et);
+      if (nst) {
+        // Get cached info or process struct.
+        StructEmbeddedInfo &nested_info = get_info(nst);
+
+        // Increase expanded version.
+        u32 nested_num_fields = nested_info.num_embedded_fields.size();
+        expanded_num_fields += nested_num_fields;
+
+        // Add embedded fields.
+        for (u32 j = 0; j < nested_num_fields; j++) {
+          u32 num_embedded = nested_info.num_embedded_fields[j];
+          info.num_embedded_fields.push_back(num_embedded);
+        }
+
+        continue;
       }
+
+      // Handle simple types.
+      exp_num_fields++;
+      info.num_embedded_fields.push_back(1);
     }
 
-    // Record the size of the complete struct and update max_struct.
-    sz[0] = num_fields;  
-    if(num_fields > max_struct_sz){
-      this->max_struct = st;
-      this->max_struct_sz= num_fields;
+    // Associate first field with expanded structure.
+    info.num_embedded_fields[0] = expanded_num_fields;
+
+    // Update maximum expanded structure if necessary.
+    if (expanded_num_fields > max_struct_sz) {
+      max_struct = st;
+      max_struct_sz = num_fields;
     }
-  
-    this->struct_info_map[st] = std::make_pair(sz, off);
+
+    // Cache and return.
+    struct_info_map[st] = info;
+    return std:move(info);
   }
 };
 

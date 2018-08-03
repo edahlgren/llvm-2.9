@@ -27,7 +27,7 @@ class AnalysisSet {
   Structs structs;
 
   std::set<u32> indirect_calls;
-  llvm::DenseSet<llvm::Value *> at_args;
+  llvm::DenseSet<llvm::Value *> addr_taken_args;
   ConstraintInstMap indirect_constraints;
   NodeMap deref_to_var_nodes;
 
