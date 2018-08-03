@@ -15,6 +15,7 @@
 #include "llvm/DerivedTypes.h" // for llvm::StructType
 #include "llvm/LLVMContext.h"  // for llvm::getGlobalContext
 #include "llvm/Type.h"         // for llvm::Type
+#include "llvm/Support/raw_ostream.h"
 
 #include <vector>  // for std::vector
 #include <utility> // for std::pair, std::make_pair
@@ -53,6 +54,27 @@ struct StructEmbeddedInfo {
   // For each field i in the struct, offset[i] is the offset of
   // field i in the expanded version of the structure.
   std::vector<u32> offsets;
+
+  std::string to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    os << "struct info {" << "\n";    
+    os.indent(1) << "embedded fields: {" << "\n";
+    for (int i = 0; i < num_embedded_fields.size(); i++) {
+      os.indent(2) << "field: " << i << ", embedded: " << num_embedded_fields[i] << "\n";
+    }
+    os.indent(1) << "}" << "\n";
+
+    os.indent(1) << "offsets: {" << "\n";
+    for (int i = 0; i < offsets.size(); i++) {
+      os.indent(2) << "field: " << i << ", offset: " << offsets[i] << "\n";
+    }
+    os.indent(1) << "}" << "\n";
+    os << "}" << "\n";    
+
+    return os.str();
+  }
 };
 
 // Structs lazily builds and caches StructEmbeddedInfo.
@@ -146,6 +168,19 @@ class Structs {
     // Cache and return.
     struct_info_map[st] = info;
     return std::move(info);
+  }
+
+  void print(llvm::raw_ostream &os) {
+    os << "Structs {" << "\n";
+    for (StructInfoMap::iterator i = struct_info_map.begin(),
+           e = struct_info_map.end(); i != e; i++) {
+      os.indent(1) << i.to_string() << "\n";
+    }
+    os << "}" << "\n";
+  }
+
+  void print() {
+    print(llvm::outs());
   }
 };
 

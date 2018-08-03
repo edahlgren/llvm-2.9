@@ -12,9 +12,11 @@
 #include "bitmap.h" // local
 #include "int.h"    // u32
 
-#include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
-#include "llvm/Module.h"       // for llvm::Function
-#include "llvm/Value.h"        // for llvm::Value
+#include "llvm/ADT/DenseMap.h"        // for llvm::DenseMap
+#include "llvm/Assembly/Writer.h"     // for llvm::WriteAsOperand
+#include "llvm/Module.h"              // for llvm::Function
+#include "llvm/Value.h"               // for llvm::Value
+#include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
 
 #include "bdd.h"    // from libbdd-dev
 
@@ -82,6 +84,26 @@ public:
   bool is_rep() const{
     return rep >= NODE_RANK_MIN;
   }    
+  
+  std::string to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    if (val)
+      llvm::WriteAsOperand(os, val, false);
+    else
+      os << "<<placeholder>>";
+
+    os << " {" << "\n";
+    os.indent(1) << "object size:\t" << obj_sz << "\n";
+    os.indent(1) << "last visit:\t" << vtime << "\n";
+    os.indent(1) << "representative:\t" << rep << "\n";
+    os.indent(1) << "non-pointer:\t" << nonptr << "\n";
+    os.indent(1) << "arr/heap alloc\t: " << weak << "\n";
+    os << "}" << "\n";
+
+    return os.str();
+  }
 };
 
 #define FUNC_NODE_OFF_RET 1
@@ -98,7 +120,6 @@ public:
   // Map values to the first node ID of its object,
   // (if it has an object).
   llvm::DenseMap<llvm::Value*, u32> object_nodes;
-  
   llvm::DenseMap<llvm::Function*, u32> ret_nodes;
   llvm::DenseMap<llvm::Function*, u32> vararg_nodes;
   
@@ -252,6 +273,117 @@ public:
     return;
   }
 
+  std::string nodes_to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    os << "nodes {" << "\n";
+    for (std::vector<Node *>::iterator i = nodes.begin(),
+           e = nodes.end(); i++) {
+      os.indent(1) << i->second->to_string();
+    }
+    os << "}" << "\n";
+
+    return os.str();
+  }
+
+  std::string values_to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    os << "values {" << "\n";
+    for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
+           value_nodes.begin(), e = value_nodes.end(); i != e; i++) {
+      assert(i->first);
+      os << i->second << " -> ";
+      llvm::WriteAsOperand(os, i->first, false);
+      os << "\n";
+    }
+    os << "}" << "\n";
+    
+    return os.str();
+  }
+
+  std::string objects_to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    os << "objects {" << "\n";
+    for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
+           object_nodes.begin(), e = object_nodes.end(); i != e; i++) {
+      assert(i->first);
+      os << i->second << " -> ";
+      llvm::WriteAsOperand(os, i->first, false);
+      os << "\n";
+    }
+    os << "}" << "\n";
+    
+    return os.str();
+  }
+
+  std::string returns_to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    os << "returns {" << "\n";
+    for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
+           ret_nodes.begin(), e = ret_nodes.end(); i != e; i++) {
+      assert(i->first);
+      os << i->second << " -> ";
+      llvm::WriteAsOperand(os, i->first, false);
+      os << "\n";
+    }
+    os << "}" << "\n";
+    
+    return os.str();
+  }
+
+  std::string varargs_to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    
+    os << "varargs {" << "\n";
+    for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
+           vararg_nodes.begin(), e = vararg_nodes.end(); i != e; i++) {
+      assert(i->first);
+      os << i->second << " -> ";
+      llvm::WriteAsOperand(os, i->first, false);
+      os << "\n";
+    }
+    os << "}" << "\n";
+    
+    return os.str();
+  }
+  
+  void print(llvm::raw_ostream &os,
+             bool print_nodes = true,
+             bool print_values = true,
+             bool print_objects = true,
+             bool print_returns = true,
+             bool print_varargs = true) {
+    
+    os << "Nodes {" << "\n";
+    if (print_nodes) {
+      os.indent(1) << nodes_to_string();
+    }
+    if (print_values) {
+      os.indent(1) << values_to_string();
+    }
+    if (print_objects) {
+      os.indent(1) << object_to_string();
+    }
+    if (print_returns) {
+      os.indent(1) << returns_to_string();
+    }
+    if (print_varargs) {
+      os.indent(1) << varargs_to_string();
+    }
+    os << "}" << "\n";
+  }
+
+  void print() {
+    print(llvm::outs());
+  }
 };
 
 typedef llvm::DenseMap<u32, u32> NodeMap;

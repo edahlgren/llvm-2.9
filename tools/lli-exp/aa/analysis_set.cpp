@@ -605,6 +605,10 @@ void AnalysisSet::init(llvm::Module *m) {
   // there are runtime values assigned to global variables? How is
   // that handled? Maybe that's a special case, but I don't see how
   // that is handled here.  
+
+  as->nodes.print();
+  as->constraints.print();
+  as->structs.print();
 }
 
 // TODO:

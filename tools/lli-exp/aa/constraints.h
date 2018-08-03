@@ -9,8 +9,10 @@
 #ifndef CONSTRAINTS_H
 #define CONSTRAINTS_H
 
-#include "int.h"               // for u32
-#include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
+#include "int.h" // for u32
+
+#include "llvm/ADT/DenseMap.h"        // for llvm::DenseMap
+#include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
 
 #include <set>    // for std::set
 #include <vector> // for std::vector
@@ -23,6 +25,23 @@ enum ConstraintType {
   ConstraintStore,      //  *d (+ off) = s;
   ConstraintGEP,        //   d = s + off
 };
+
+static std::string type_to_string(ConstraintType type) {
+  switch (type) {
+  case ConstraintAddrOf:
+    return "ADDR_OF (d = &s)";
+  case ConstraintCopy:
+    return "COPY (d = s)";
+  case ConstraintLoad:
+    return "LOAD (d = *s)";
+  case ConstraintStore:
+    return "STORE (*d = s)";
+  case ConstraintGEP:
+    return "GEP (d = s + off)";
+  default:
+    assert(false && "invalid type");
+  }
+}
 
 class Constraint {
 public:
@@ -72,11 +91,27 @@ public:
     // TODO: implement
     return;
   }
+
+  std::string to_string() {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    os << "constraint {" << "\n";
+    os.indent(1) << "type:\t" << type_to_string(type) << "\n";
+    os.indent(1) << "(d)est:\t" << dest << "\n";
+    os.indent(1) << "(s)rc:\t" << src << "\n";
+    os.indent(1) << "offset:\t" << off << "\n";
+    os << "}";
+    
+    return os.str();
+  }
 };
 
 class Constraints {
  public:
-  std::vector<Constraint> constraints;
+  llvm::DenseSet<Constraint> constraints;
+  typedef llvm::DenseSet<Constraint>::iterator iterator;
+  
   Constraints() {}
 
   bool add(ConstraintType t, u32 dest, u32 src, u32 off = 0) {
@@ -91,8 +126,22 @@ class Constraints {
 
     Constraint c(t, dest, src, off);
     c.assert_valid();
-    constraints.push_back(c);
-    return true;
+    
+    std::pair<iterator, bool> result = constraints.insert(c);
+    return result->second;
+  }
+
+  void print(llvm::raw_ostream &os) {
+    os << "Constraints {" << "\n";
+    for (iterator i = constraints.begin(), e = constraints.end();
+         i != e; i++) {
+      os.indent(1) << i.to_string() << "\n";
+    }
+    os << "}" << "\n";
+  }
+
+  void print() {
+    print(llvm::out());
   }
 };
 
