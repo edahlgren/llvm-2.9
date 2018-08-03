@@ -119,28 +119,48 @@ public:
     return r;
   }
 
-  u32 push_back(Node *node) {
-    nodes.push_back(node);
+  void add_unreachable(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
+    nodes.push_back(new Node(v, obj_sz, weak));    
   }
 
-  u32 add_value(llvm::Value *v) {
+  u32 add_value(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
-    nodes.push_back(new Node(v));
+    nodes.push_back(new Node(v, obj_sz, weak));
     value_nodes[v] = id;
     return id;
   }
 
-  u32 add_object(llvm::Value *v, u32 obj_sz = 1, bool weak = false) {
+  u32 add_object(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
     nodes.push_back(new Node(v, obj_sz, weak));
     object_nodes[v] = id;
     return id;
   }
 
+  u32 add_ret(llvm::Function *f, u32 obj_sz = 0, bool weak = false) {
+    u32 id = nodes.size();
+    nodes.push_back(new Node(f, obj_sz, weak));
+    ret_nodes[f] = id;
+    return id;
+  }
+
+  u32 add_vararg(llvm::Function *f, u32 obj_sz = 0, bool weak = false) {
+    u32 id = nodes.size();
+    nodes.push_back(new Node(f, obj_sz, weak));
+    vararg_nodes[f] = id;
+    return id;
+  }
+
+  Node *find_node(u32 id) {
+    assert(id > 0 && id < nodes.size());
+    return nodes[id];
+  }
+
   u32 find_value_node(llvm::Value *v, bool allow_null = false) const {
     assert(v);
 
-    llvm::DenseMap<llvm::Value*, u32>::iterator i = value_nodes.find(v);
+    llvm::DenseMap<llvm::Value *, u32>::const_iterator i =
+      value_nodes.find(v);
     if (i == value_nodes.end()) {
       if (allow_null) {
         return 0;
@@ -156,7 +176,8 @@ public:
   u32 find_object_node(llvm::Value *v, bool allow_null = false) const {
     assert(v);
     
-    llvm::DenseMap<llvm::Value*, u32>::iterator i = object_nodes.find(v);
+    llvm::DenseMap<llvm::Value *, u32>::const_iterator i =
+      object_nodes.find(v);
     if (i == value_nodes.end()) {
       if (allow_null) {
         return 0;
@@ -172,17 +193,19 @@ public:
   u32 find_ret_node(llvm::Function *f) const {
     assert(f);
 
-    if (!llvm::isa<PointerType>(f->getFunctionType()->getReturnType()))
+    const llvm::Type *typ = f->getFunctionType()->getReturnType();
+    if (!llvm::isa<llvm::PointerType>(typ))
       return 0;
    
-    llvm::DenseMap<llvm::Function*, u32>::iterator i = ret_nodes.find(f);
+    llvm::DenseMap<llvm::Function*, u32>::const_iterator i =
+      ret_nodes.find(f);
     if (i == ret_nodes.end()) {
       u32 obj_node_id = find_object_node(f, true);
       assert(obj_node_id && "Missing ret_nodes entry");
       return obj_node_id + FUNC_NODE_OFF_RET;
     }
 
-    assert(i != value_nodes.end());
+    assert(i != ret_nodes.end());
     assert(i->second && "Failed to find non-zero ret node");
     return i->second;
   }
@@ -193,14 +216,15 @@ public:
     if (!f->getFunctionType()->isVarArg())
       return 0;
    
-    llvm::DenseMap<llvm::Function*, u32>::iterator i = varargs_nodes.find(f);
+    llvm::DenseMap<llvm::Function*, u32>::const_iterator i =
+      vararg_nodes.find(f);
     if (i == vararg_nodes.end()) {
       u32 obj_node_id = find_object_node(f, true);
       assert(obj_node_id && "Missing varargs_nodes entry");
       return obj_node_id + nodes[obj_node_id]->obj_sz - 1;
     }
 
-    assert(i != value_nodes.end());
+    assert(i != vararg_nodes.end());
     assert(i->second && "Failed to find non-zero vararg node");
     return i->second;
   }

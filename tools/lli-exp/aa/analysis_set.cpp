@@ -37,27 +37,22 @@ static void assert_obj_sz(AnalysisSet *as, u32 obj_node_id) {
   assert(as->nodes.nodes[obj_node_id]->obj_sz == num_objects);
 }
 
-static void add_addr_taken_function_args(AnalysisSet *as,
-                                         llvm::Function *f,
-                                         u32 obj_node_id) {
+static void init_addr_taken_function_args(AnalysisSet *as,
+                                          llvm::Function *f,
+                                          u32 obj_node_id) {
   // Sanity check.
   assert_ret_next(as, obj_node_id);
 
-  // Step 1.
-  //
   // Add a placeholder node for the function's return value.
   // Note that this cannot be found by value. I'm not sure why.
-  //
-  as->nodes.nodes[obj_node_id]->obj_sz++;
-  as->nodes.nodes.push_back(new Node(f, 1));
-  as->nodes.next++;
+  Node *node = as->nodes.find_node(obj_node_id);
+  node->obj_sz++;
+  as->nodes.add_unreachable(f);
 
-  // Step 2.
-  //
   // Find the last pointer argument.
-  //
   u32 last_ptr = OVERFLOW_U32;
-  for (u32 i = 0, llvm::Function::arg_iterator arg = f->arg_begin(),
+  u32 i = 0;
+  for (llvm::Function::arg_iterator arg = f->arg_begin(),
          end = f->arg_end(); arg != end; i++, arg++) {
     if (llvm::isa<llvm::PointerType>(arg->getType())) {
       last_ptr = i;
@@ -67,150 +62,107 @@ static void add_addr_taken_function_args(AnalysisSet *as,
   // Sanity check.
   assert_args_next(as, obj_node_id);
   
-  // Step 3.
-  //
   // Up until the last pointer argument, if there is one, map
   // each argument value to a node.
-  //
   if (last_ptr != OVERFLOW_U32) {
-    for (u32 i = 0, llvm::Function::arg_iterator arg = f->arg_begin(),
-           end = f->arg_end(); i != last_ptr && argarg != end; i++, arg++) {
+    u32 j = 0;
+    for (llvm::Function::arg_iterator arg = f->arg_begin(),
+           end = f->arg_end(); j != last_ptr && arg != end; j++, arg++) {
 
       // Map argument to a node that can be found by value.
-      u32 arg_node_id = as->nodes.next++;
-      assert(arg_node_id == obj_node_id + FUNC_NODE_OFF_ARG0 + i);
-
-      as->nodes.nodes[obj_node_id]->obj_sz++;
-      as->nodes.nodes.push_back(new Node(arg, 1));
-      as->nodes.value_nodes[arg] = arg_node_id;      
+      u32 arg_id = as->nodes.add_value(arg);
+      assert(arg_id == obj_node_id + FUNC_NODE_OFF_ARG0 + j);
+      node->obj_sz++;
 
       // Keep track of arguments of address taken functions.
       as->addr_taken_args.insert(arg);
     }
   }
   
-  // Step 4.
-  //
   // Make a vararg node if needed. Note that like the return
   // value this also cannot be found by value. Again, not sure
   // why.
-  //
   if (f->isVarArg()) {
-    as->nodes.nodes[obj_node_id]->obj_sz++;
-    as->nodes.nodes.push_back(new Node(f, 1));
-    as->nodes.next++;
+    node->obj_sz++;
+    as->nodes.add_unreachable(f);
   }
 
   // Sanity check.
   assert_obj_sz(as, obj_node_id);
 }
 
-static init_addr_taken_function_signature(AnalysisSet *as,
-                                          llvm::Function *f,
-                                          std::string entry_point = "main") {  
+static void init_addr_taken_function_signature(AnalysisSet *as,
+                                               llvm::Function *f,
+                                               std::string entry_point) {
 
   assert(f && f->hasAddressTaken());
 
-  // Step 1.
-  //
-  // Create a node at node_id to represent the function pointer.
-  //
-  u32 node_id = 0;
-  node_id = as->nodes.next++;
-  as->nodes.nodes.push_back(new Node(f));
-  as->nodes.values_nodes[f] = node_id;
+  // Create a node at node_id to represent the function
+  // pointer.
+  u32 node_id = as->nodes.add_value(f);
 
-  // Step 2.
-  //
-  // Create a node at obj_node_id to represent the function object
-  // backing the pointer.
-  //
-  u32 obj_node_id = 0;
-  u32 num_objects = 1;
-  obj_node_id = as->nodes.next++;    
-  as->nodes.nodes.push_back(new Node(f, num_objects));
-  as->nodes.object_nodes[f] = obj_node_id;
+  // Create a node at obj_node_id to represent the function
+  // object backing the pointer.
+  u32 obj_node_id = as->nodes.add_object(f, 1);
 
-  // Step 3.
-  //
   // Create a constraint where node_id represents the
   // function pointer and obj_node_id represents the
   // function object whose address is being taken:
   //
   //   node_id = &obj_node_id
-  //
   as->constraints.add(ConstraintAddrOf, node_id, obj_node_id);
 
-  // Step 4.
-  //
   // Skip special functions:
   //
   // 1. Treat external function args as external variables.
+  //
   // 2. Treat entry point args as external variables. After all,
   //    if this is a C-style main with argv and envp, there's
   //    no object we can find in the program backing these
   //    pointer args anyway.
-  //
   if (f->getNameStr() == entry_point ||
       as->ext_info.is_ext(f)) {
     return;
   }
 
-  // Step 5.
-  //
-  // Handle normal function args.
-  //
-  handle_addr_taken_function_args(as, f, obj_node_id);
+  // Handle addr taken function args.
+  init_addr_taken_function_args(as, f, obj_node_id);
 }
 
-static void handle_normal_function_args(AnalysisSet *as,
-                                        llvm::Function *f) {  
-  // Step 1.
-  //
+static void init_normal_function_args(AnalysisSet *as,
+                                      llvm::Function *f) {  
+
   // Map each pointer argument value to a node.
-  //
   for (llvm::Function::arg_iterator arg = f->arg_begin(),
          end = f->arg_end(); arg != end; arg++) {
     if (llvm::isa<llvm::PointerType>(arg->getType())) {
-      u32 arg_node_id = as->nodes.next++;
-      as->nodes.nodes.push_back(new Node(arg));
-      as->nodes.value_nodes[arg] = arg_node_id;
+      as->nodes.add_value(arg);
     }
   }
   
-  // Step 2.
-  //
   // Map pointer returns to the function itself.
-  //
   if (llvm::isa<llvm::PointerType>(f->getReturnType())) {
-    u32 return_node_id = as->nodes.next++;
-    as->nodes.nodes.push_back(new Node(f));
-    as->nodes.ret_nodes[f] = return_node_id;
+    as->nodes.add_ret(f);
   }
   
-  // Step 3.
-  //
   // Condense and map variable args to the function itself.
-  //
   if (f->isVarArg()) {
-    u32 vararg_node_id = as->nodes.next++;
-    as->nodes.nodes.push_back(new Node(f));
-    as->nodes.vararg_nodes[f] = vararg_node_id;
+    as->nodes.add_vararg(f);
   }
 }
 
 static void init_normal_function_signature(AnalysisSet *as,
                                            llvm::Function *f,
-                                           std::string entry_point = "main") {
+                                           std::string entry_point) {
 
-  // Treat the entry point's args and external function args
-  // as external variables. Effectively skip.
+  // Treat the entry point's args and external function
+  // args as external variables. Effectively skip.
   if (f->getNameStr() == entry_point ||
       as->ext_info.is_ext(f)) {
     return;
   }
 
-  handle_normal_function_args(as, f);
+  init_normal_function_args(as, f);
 }
 
 // Process function signatures. This means:
@@ -220,9 +172,10 @@ static void init_normal_function_signature(AnalysisSet *as,
 //
 // + Add pointer and object nodes for arguments with their
 //   address taken.
-//
 static void init_function_signatures(llvm::Module *m,
-                                     AnalysisSet *as) {
+                                     AnalysisSet *as,
+                                     std::string entry_point = "main") {
+  
   for (llvm::Module::iterator i = m->begin(), e = m->end();
        i != e; i++) {
     if (i->hasAddressTaken()) {
@@ -233,8 +186,8 @@ static void init_function_signatures(llvm::Module *m,
   }
 }
 
-static bool is_null(llvm::Value *v) {
-  return v->isNullValue();
+static bool is_null(llvm::Constant *c) {
+  return c->isNullValue();
 }
 
 static bool is_const_null_ptr(llvm::Value *v) {
@@ -250,7 +203,7 @@ static bool is_single_value_type(llvm::Value *v) {
 }
 
 static bool is_pointer(llvm::Value *v) {
-  return llvm::isa<llvm::PointerType>(c->getType());    
+  return llvm::isa<llvm::PointerType>(v->getType());    
 }
 
 static bool is_ptr_to_int(llvm::ConstantExpr *expr) {
@@ -266,14 +219,30 @@ static bool is_gep(llvm::ConstantExpr *expr) {
 }
 
 static void assert_valid_const_expr(llvm::ConstantExpr *expr) {  
-  assert(is_ptr_to_int(expr) || is_int_to_ptr(expr) || is_gep(expr));
+  assert(is_ptr_to_int(expr) ||
+         is_int_to_ptr(expr) ||
+         is_gep(expr));
 }
 
 static llvm::ConstantExpr *const_expr(llvm::Value **c) {
   for (llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(*c);
        expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(*c)) {
       if (expr->getOpcode() == llvm::Instruction::BitCast) {
-        *c = const_expr->getOperand(0);
+        *c = expr->getOperand(0);
+      } else {
+        assert_valid_const_expr(expr);
+        return expr;
+      }
+  }
+  
+  return nullptr;
+}
+
+static llvm::ConstantExpr *const_expr(llvm::Constant **c) {
+  for (llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(*c);
+       expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(*c)) {
+      if (expr->getOpcode() == llvm::Instruction::BitCast) {
+        *c = expr->getOperand(0);
       } else {
         assert_valid_const_expr(expr);
         return expr;
@@ -291,17 +260,20 @@ static llvm::ConstantArray *const_array(llvm::Constant *c) {
   return llvm::dyn_cast<llvm::ConstantArray>(c);
 }
 
-static bool get_type(llvm::GlobalVariable *g, llvm::Type **typ) {
-  bool is_array = false;
-  *typ = g->getType()->getContainedType(0);
-  while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(typ)) {
-    *typ = at->getElementType();
-    is_array = true;
-  }
-  return is_array;
-}
+struct GlobalType {
+  const llvm::Type *type;
+  bool is_array;
 
-static llvm::StructType *struct_type(llvm::Type *typ) {
+  GlobalType(llvm::GlobalVariable *g) {
+    type = g->getType()->getContainedType(0);
+    while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+      type = at->getElementType();
+      is_array = true;
+    }
+  }
+};
+
+static const llvm::StructType *struct_type(const llvm::Type *typ) {
   return llvm::dyn_cast<llvm::StructType>(typ);
 }
 
@@ -313,29 +285,29 @@ static void init_global_signature(AnalysisSet *as, llvm::GlobalVariable *g) {
   //      intializers.
 
   // Find the type of the global.
-  llvm::Type *typ;
-  bool is_array = get_type(g, &typ);
+  GlobalType gt(g);
 
   // Allocate pointer node.
   u32 node_id = as->nodes.add_value(g);
 
   // Allocate object node(s).
-  u32 obj_id = NodeNode;  
-  if (llvm::StructType *st = struct_type(typ)) {
+  u32 obj_id = NodeNone;
+  
+  if (const llvm::StructType *st = struct_type(gt.type)) {
     // Handle structs.
     const std::vector<u32> sz = as->structs.get_sz(st);
-    for (std::vector<u32>::iterator i = sz.begin(), e = sz.end();
+    for (std::vector<u32>::const_iterator i = sz.begin(), e = sz.end();
          i != e; i++) {
-      u32 _obj_id = as->nodes.add_object(g, *i, is_array);
+      u32 _obj_id = as->nodes.add_object(g, *i, gt.is_array);
       // Use the first element to represent the whole thing.
-      if (obj_id == NodeNode) {
+      if (obj_id == NodeNone) {
         obj_id = _obj_id;
       }
     }
   } else {
     // Treat everything else like a single-value object,
     // including arrays.
-    obj_id = as->nodes.add_object(g, 1, is_array);
+    obj_id = as->nodes.add_object(g, 1, gt.is_array);
   }
 
   // Assert that the obj_id is valid.
@@ -353,7 +325,6 @@ static void init_global_signature(AnalysisSet *as, llvm::GlobalVariable *g) {
 //
 // + Add an object node for each field in the global type,
 //   for example, one for each struct field.
-//
 static void init_global_variable_signatures(llvm::Module *m,
                                             AnalysisSet *as) {
   for (llvm::Module::global_iterator i = m->global_begin(),
@@ -363,6 +334,7 @@ static void init_global_variable_signatures(llvm::Module *m,
 }
 
 class IDSet {
+ public:
   llvm::DenseMap<u32, u32> cache;
 
   void add(u32 id, u32 num_fields) {
@@ -371,17 +343,17 @@ class IDSet {
 
   bool lookup(u32 id, u32 *num_fields = 0) {
     llvm::DenseMap<u32, u32>::iterator i = cache.find(id);
-    if (i == cache.end) {
+    if (i == cache.end()) {
       return false;
     }
     if (num_fields)  {
-      *num_fields = i;
+      *num_fields = i->second;
     }
     return true;
   }
 };
 
-static llvm::ConstantInt *const_inst(llvm::Value *v) {
+static const llvm::ConstantInt *const_int(llvm::Value *v) {
   return llvm::dyn_cast<llvm::ConstantInt>(v);
 }
 
@@ -392,7 +364,7 @@ static u32 gep_off(AnalysisSet *as, llvm::User *u) {
   for (llvm::gep_type_iterator i = llvm::gep_type_begin(*u),
          e = llvm::gep_type_end(*u); i != e; i++) {
 
-    const llvm::StructType *st = const_struct(i);
+    const llvm::StructType *st = struct_type(*i);
     if (!st) {
       continue;
     }
@@ -421,13 +393,13 @@ static u32 init_gep(AnalysisSet *as,
     node_id = as->nodes.add_value(expr);
   }
 
-  if (done_set.lookup(node_id)) {
+  if (done_set->lookup(node_id)) {
     // Already processed.
-    return;
+    return node_id;
   }
 
   // Prematurely mark processed for cleaner returns.
-  done_set.add(node_id, 1);
+  done_set->add(node_id, 1);
 
   llvm::Value *ptr = expr->getOperand(0);
   llvm::ConstantExpr *sub_expr = const_expr(&ptr);
@@ -435,7 +407,7 @@ static u32 init_gep(AnalysisSet *as,
 
   if (is_int_to_ptr(sub_expr)) {
     as->constraints.add(ConstraintAddrOf, node_id, NodeUnknownTarget);
-    return;
+    return node_id;
   }
 
   u32 ptr_node_id = as->nodes.find_value_node(ptr);
@@ -453,6 +425,9 @@ static u32 init_gep(AnalysisSet *as,
   return node_id;
 }
 
+u32 _init_global_value(AnalysisSet *as, llvm::Constant *c,
+                       u32 obj_id, IDSet *done_set);
+
 static u32 __init_global_value(AnalysisSet *as,
                                llvm::Constant *c,
                                u32 obj_id,
@@ -466,7 +441,7 @@ static u32 __init_global_value(AnalysisSet *as,
   if (is_ptr_to_int(expr) ||
       is_null(c) ||
       is_undefined(c) ||
-      is_single_value_type(c) && !is_pointer(c)) {
+      (is_single_value_type(c) && !is_pointer(c))) {
     // Skip over, nothing interesting here.
     return 1;
   }
@@ -506,7 +481,7 @@ static u32 __init_global_value(AnalysisSet *as,
 
   if (is_pointer(c) && is_gep(expr)) {
     // Handle pointers to GEPs.
-    u32 expr_id = init_gep(as, expr);
+    u32 expr_id = init_gep(as, expr, done_set);
     as->constraints.add(ConstraintCopy, obj_id, expr_id);
     return 1;
   }
@@ -522,10 +497,8 @@ static u32 __init_global_value(AnalysisSet *as,
   return 1;
 }
 
-static u32 _init_global_value(AnalysisSet *as,
-                               llvm::Constant *c,
-                               u32 obj_id,
-                               IDSet *done_set) {
+u32 _init_global_value(AnalysisSet *as, llvm::Constant *c,
+                       u32 obj_id, IDSet *done_set) {
   assert(c);
 
   u32 num_fields;
@@ -538,9 +511,9 @@ static u32 _init_global_value(AnalysisSet *as,
   return num_fields;
 }
 
-static u32 init_global_value(AnalysisSet *as,
-                             llvm::GlobalVariable *g,
-                             IDSet *done_set) {
+static void init_global_value(AnalysisSet *as,
+                              llvm::GlobalVariable *g,
+                              IDSet *done_set) {
   assert(g);
 
   if (!g->hasInitializer()) {
@@ -554,12 +527,11 @@ static u32 init_global_value(AnalysisSet *as,
   // The global value to associate with the object.
   llvm::Constant *c = g->getInitializer();
 
-  return _init_global_value(as, c, obj_id, done_set);
+  _init_global_value(as, c, obj_id, done_set);
+  return;
 }
 
 // Process global variable values.
-//
-//
 static void init_global_variable_values(llvm::Module *m, AnalysisSet *as) {
   IDSet done_set;
   for (llvm::Module::global_iterator i = m->global_begin(),
@@ -573,18 +545,16 @@ void AnalysisSet::init(llvm::Module *m) {
   // excluding the NodeFirst. These are used to describe exceptional
   // states, like when we can't know the target of a pointer.
   for (u32 i = 0; i < NodeFirst; i++) {
-    // Placeholders have no value.
-    Node *node = new Node();
-
+    u32 obj_sz = 0;
     if (i == NodeUnknownTarget) {
       // Treat the unknown target as an object whose address has
       // been taken.
-      node->obj_sz = 1;
+      obj_sz = 1;
       constraints.add(ConstraintAddrOf,
                       NodeConstToUnknownTarget,
                       NodeUnknownTarget);
     }
-    nodes.push_back(node);
+    nodes.add_unreachable(nullptr, obj_sz);
   }
 
   // Process function signatures. This means:
@@ -642,4 +612,4 @@ void AnalysisSet::init(llvm::Module *m) {
 // Finish adding comments.
 // X Fill in the trivial node lookup code.
 // X Go through and make sure all little helper functions are defined.
-// Convert function code to simpler add_value and add_object helpers.
+// X Convert function code to simpler add_value and add_object helpers.

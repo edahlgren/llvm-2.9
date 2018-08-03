@@ -75,18 +75,18 @@ class Structs {
     max_struct_sz(0) {}
 
   // Returns the number of embedded fields for each field in st.
-  const std::vector<u32>& get_sz(const llvm::StructType *st){
+  const std::vector<u32> get_sz(const llvm::StructType *st){
     return get_info(st).num_embedded_fields;
   }
 
   // Returns the offset of each field in the expanded version
   // of st.
-  const std::vector<u32>& get_off(const llvm::StructType *st){
+  const std::vector<u32> get_off(const llvm::StructType *st){
     return get_info(st).offsets;
   }
   
   // Return and cache the StructEmbeddedInfo of st.
-  const StructEmbeddedInfo& get_info(const llvm::StructType *st) {
+  const StructEmbeddedInfo get_info(const llvm::StructType *st) {
     assert(st);
 
     // Is it cached?
@@ -114,7 +114,7 @@ class Structs {
       const llvm::StructType *nst = llvm::dyn_cast<llvm::StructType>(et);
       if (nst) {
         // Get cached info or process struct.
-        StructEmbeddedInfo &nested_info = get_info(nst);
+        const StructEmbeddedInfo nested_info = get_info(nst);
 
         // Increase expanded version.
         u32 nested_num_fields = nested_info.num_embedded_fields.size();
@@ -130,7 +130,7 @@ class Structs {
       }
 
       // Handle simple types.
-      exp_num_fields++;
+      expanded_num_fields++;
       info.num_embedded_fields.push_back(1);
     }
 
@@ -140,12 +140,12 @@ class Structs {
     // Update maximum expanded structure if necessary.
     if (expanded_num_fields > max_struct_sz) {
       max_struct = st;
-      max_struct_sz = num_fields;
+      max_struct_sz = expanded_num_fields;
     }
 
     // Cache and return.
     struct_info_map[st] = info;
-    return std:move(info);
+    return std::move(info);
   }
 };
 
