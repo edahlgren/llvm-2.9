@@ -84,6 +84,9 @@ public:
   }    
 };
 
+#define FUNC_NODE_OFF_RET 1
+#define FUNC_NODE_OFF_ARG0 2
+
 class Nodes {
 public:
   u32 next;
@@ -116,6 +119,10 @@ public:
     return r;
   }
 
+  u32 push_back(Node *node) {
+    nodes.push_back(node);
+  }
+
   u32 add_value(llvm::Value *v) {
     u32 id = nodes.size();
     nodes.push_back(new Node(v));
@@ -130,35 +137,86 @@ public:
     return id;
   }
 
-  u32 find_or_add_value_node(llvm::Value *v) const {
-    // TODO: implement.
-    return 0;
-  }
-
   u32 find_value_node(llvm::Value *v, bool allow_null = false) const {
-    // TODO: implement.
-    return 0;
+    assert(v);
+
+    llvm::DenseMap<llvm::Value*, u32>::iterator i = value_nodes.find(v);
+    if (i == value_nodes.end()) {
+      if (allow_null) {
+        return 0;
+      } else {      
+        assert(false && "Failed to find value");
+      }
+    }
+
+    assert(i->second && "Failed to find non-zero value");
+    return i->second;
   }
   
   u32 find_object_node(llvm::Value *v, bool allow_null = false) const {
-    // TODO: implement.
-    return 0;
+    assert(v);
+    
+    llvm::DenseMap<llvm::Value*, u32>::iterator i = object_nodes.find(v);
+    if (i == value_nodes.end()) {
+      if (allow_null) {
+        return 0;
+      } else {      
+        assert(false && "Failed to find value");
+      }
+    }
+
+    assert(i->second && "Failed to find non-zero value");
+    return i->second;
   }
   
   u32 find_ret_node(llvm::Function *f) const {
-    // TODO: implement.
-    return 0;    
+    assert(f);
+
+    if (!llvm::isa<PointerType>(f->getFunctionType()->getReturnType()))
+      return 0;
+   
+    llvm::DenseMap<llvm::Function*, u32>::iterator i = ret_nodes.find(f);
+    if (i == ret_nodes.end()) {
+      u32 obj_node_id = find_object_node(f, true);
+      assert(obj_node_id && "Missing ret_nodes entry");
+      return obj_node_id + FUNC_NODE_OFF_RET;
+    }
+
+    assert(i != value_nodes.end());
+    assert(i->second && "Failed to find non-zero ret node");
+    return i->second;
   }
   
   u32 find_vararg_node(llvm::Function *f) const {
-    // TODO: implement.
-    return 0;
+    assert(f);
+
+    if (!f->getFunctionType()->isVarArg())
+      return 0;
+   
+    llvm::DenseMap<llvm::Function*, u32>::iterator i = varargs_nodes.find(f);
+    if (i == vararg_nodes.end()) {
+      u32 obj_node_id = find_object_node(f, true);
+      assert(obj_node_id && "Missing varargs_nodes entry");
+      return obj_node_id + nodes[obj_node_id]->obj_sz - 1;
+    }
+
+    assert(i != value_nodes.end());
+    assert(i->second && "Failed to find non-zero vararg node");
+    return i->second;
   }
   
-  void add_double_object_node(llvm::Value *v) {
-    // TODO: implement.
-    return;
+  u32 pe(llvm::Value* v) {
+    u32 n = find_value_node(v, true);
+    if (!n)
+      return MAX_U32;
+    
+    return rep(n);
   }
+
+  u32 pe(u32 n) {
+    assert(n && n < nodes.size() && "node ID out of range");
+    return rep(n);
+  }  
   
   u32 merge(u32 a, u32 b) {
     // TODO: implement.
@@ -170,17 +228,6 @@ public:
     return;
   }
 
-  u32 pe(llvm::Value* v){
-    u32 n = this->find_value_node(v, 1);
-    if(!n)
-      return MAX_U32;
-    return this->rep(n);
-  }
-
-  u32 pe(u32 n){
-    assert(n && n < this->nodes.size() && "node ID out of range");
-    return this->rep(n);
-  }  
 };
 
 typedef llvm::DenseMap<u32, u32> NodeMap;

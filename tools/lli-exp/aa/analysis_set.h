@@ -39,7 +39,4 @@ class AnalysisSet {
   void init(llvm::Module *m);
 };
 
-#define FUNC_NODE_OFF_RET 1
-#define FUNC_NODE_OFF_ARG0 2
-
 #endif // end ANALYSIS_H

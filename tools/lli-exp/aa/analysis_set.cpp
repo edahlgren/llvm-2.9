@@ -369,15 +369,21 @@ class IDSet {
     cache[id] = num_fields;
   }
 
-  bool lookup(u32 id, u32 *num_fields) {
+  bool lookup(u32 id, u32 *num_fields = 0) {
     llvm::DenseMap<u32, u32>::iterator i = cache.find(id);
     if (i == cache.end) {
       return false;
     }
-    *num_fields = i;
+    if (num_fields)  {
+      *num_fields = i;
+    }
     return true;
   }
 };
+
+static llvm::ConstantInt *const_inst(llvm::Value *v) {
+  return llvm::dyn_cast<llvm::ConstantInt>(v);
+}
 
 static u32 gep_off(AnalysisSet *as, llvm::User *u) {
   assert(u);
@@ -391,7 +397,7 @@ static u32 gep_off(AnalysisSet *as, llvm::User *u) {
       continue;
     }
 
-    const llvm::ConstantInt *op = const_op(i);
+    const llvm::ConstantInt *op = const_int(i.getOperand());
     u32 index = op ? op->getZExtValue() : 0;
       
     const std::vector<u32> offsets = as->structs.get_off(st);
@@ -523,12 +529,12 @@ static u32 _init_global_value(AnalysisSet *as,
   assert(c);
 
   u32 num_fields;
-
   if (!done_set->lookup(obj_id, &num_fields)) {
-    num_fields = __init_global_value(as, c, obj_id, done_set);
-    done_set->add(obj_id, num_fields);
-  }  
-
+    return num_fields;
+  }
+  
+  num_fields = __init_global_value(as, c, obj_id, done_set);
+  done_set->add(obj_id, num_fields);
   return num_fields;
 }
 
@@ -578,7 +584,7 @@ void AnalysisSet::init(llvm::Module *m) {
                       NodeConstToUnknownTarget,
                       NodeUnknownTarget);
     }
-    nodes.nodes.push_back(new Node);
+    nodes.push_back(node);
   }
 
   // Process function signatures. This means:
@@ -634,6 +640,6 @@ void AnalysisSet::init(llvm::Module *m) {
 // TODO:
 //
 // Finish adding comments.
-// Fill in the trivial node lookup code.
-// Go through and make sure all little helper functions are defined.
+// X Fill in the trivial node lookup code.
+// X Go through and make sure all little helper functions are defined.
 // Convert function code to simpler add_value and add_object helpers.
