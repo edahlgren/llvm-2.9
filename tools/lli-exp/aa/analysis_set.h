@@ -39,4 +39,6 @@ class AnalysisSet {
   void init(llvm::Module *m);
 };
 
+void print_named_constraints(AnalysisSet *as, int l);
+
 #endif // end ANALYSIS_H

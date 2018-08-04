@@ -77,30 +77,42 @@ public:
   bitmap store_from;
   bitmap gep_to;
 
- Node(llvm::Value *v = 0, u32 s = 0, bool w = 0) :
+  Node(llvm::Value *v = 0, u32 s = 0, bool w = 0) :
     val(v), obj_sz(s), vtime(0),
     rep(NODE_RANK_MIN), nonptr(0), weak(w) {}
 
+  std::string rep_str() {
+    return std::to_string(rep);
+  }
+
   bool is_rep() const{
     return rep >= NODE_RANK_MIN;
-  }    
-  
-  std::string to_string() {
+  }
+
+  std::string value_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
 
     if (val)
-      llvm::WriteAsOperand(os, val, false);
+      llvm::WriteAsOperand(os.indent(l), val, false);
     else
-      os << "<<placeholder>>";
+      os.indent(l) << "<<placeholder>>";
 
-    os << " {" << "\n";
-    os.indent(1) << "object size:\t" << obj_sz << "\n";
-    os.indent(1) << "last visit:\t" << vtime << "\n";
-    os.indent(1) << "representative:\t" << rep << "\n";
-    os.indent(1) << "non-pointer:\t" << nonptr << "\n";
-    os.indent(1) << "arr/heap alloc\t: " << weak << "\n";
-    os << "}" << "\n";
+    return os.str();
+  }
+  
+  std::string to_string(int l = 0) {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    os << value_to_string(l);
+    os.indent(l) << " {"
+                 << " obj_z: " << obj_sz
+                 << " vtime: " << vtime
+                 << " rep: " << (is_rep() ? "(this)" : rep_str())
+                 << " ptr: " << (nonptr ? "false" : "true")
+                 << " weak: " << (weak ? "true" : "false")
+                 << "}";
 
     return os.str();
   }
@@ -273,116 +285,116 @@ public:
     return;
   }
 
-  std::string nodes_to_string() {
+  std::string nodes_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
     
-    os << "nodes {" << "\n";
-    for (std::vector<Node *>::iterator i = nodes.begin(),
-           e = nodes.end(); i++) {
-      os.indent(1) << i->second->to_string();
+    os.indent(l) << "nodes {" << "\n";
+    for (u32 i = 0; i < nodes.size(); i++) {
+      Node *node = nodes[i];
+      os.indent(l + 1) << i << ":\t" << node->to_string() << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}";
 
     return os.str();
   }
 
-  std::string values_to_string() {
+  std::string values_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
     
-    os << "values {" << "\n";
+    os.indent(l) << "values {" << "\n";
     for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
            value_nodes.begin(), e = value_nodes.end(); i != e; i++) {
       assert(i->first);
-      os << i->second << " -> ";
-      llvm::WriteAsOperand(os, i->first, false);
-      os << "\n";
+      os.indent(l + 1) << i->second << ":\t";
+      llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
+      os.indent(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}";
     
     return os.str();
   }
 
-  std::string objects_to_string() {
+  std::string objects_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
     
-    os << "objects {" << "\n";
+    os.indent(l) << "objects {" << "\n";
     for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
            object_nodes.begin(), e = object_nodes.end(); i != e; i++) {
       assert(i->first);
-      os << i->second << " -> ";
-      llvm::WriteAsOperand(os, i->first, false);
-      os << "\n";
+      os.indent(l + 1) << i->second << ":\t";
+      llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
+      os.indent(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}";
     
     return os.str();
   }
 
-  std::string returns_to_string() {
+  std::string returns_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
     
-    os << "returns {" << "\n";
+    os.indent(l) << "returns {" << "\n";
     for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
            ret_nodes.begin(), e = ret_nodes.end(); i != e; i++) {
       assert(i->first);
-      os << i->second << " -> ";
-      llvm::WriteAsOperand(os, i->first, false);
-      os << "\n";
+      os.indent(l + 1) << i->second << ":\t";
+      llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
+      os.indent(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}";
     
     return os.str();
   }
 
-  std::string varargs_to_string() {
+  std::string varargs_to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
     
-    os << "varargs {" << "\n";
+    os.indent(l) << "varargs {" << "\n";
     for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
            vararg_nodes.begin(), e = vararg_nodes.end(); i != e; i++) {
       assert(i->first);
-      os << i->second << " -> ";
-      llvm::WriteAsOperand(os, i->first, false);
-      os << "\n";
+      os.indent(l + 1) << i->second << ":\t";
+      llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
+      os.indent(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}";
     
     return os.str();
   }
   
-  void print(llvm::raw_ostream &os,
+  void print(llvm::raw_ostream &os, int l = 0,
              bool print_nodes = true,
              bool print_values = true,
              bool print_objects = true,
              bool print_returns = true,
              bool print_varargs = true) {
     
-    os << "Nodes {" << "\n";
+    os.indent(l) << "Nodes {" << "\n";
     if (print_nodes) {
-      os.indent(1) << nodes_to_string();
+      os << nodes_to_string(l + 1) << "\n";
     }
     if (print_values) {
-      os.indent(1) << values_to_string();
+      os << values_to_string(l + 1) << "\n";
     }
     if (print_objects) {
-      os.indent(1) << object_to_string();
+      os << objects_to_string(l + 1) << "\n";
     }
     if (print_returns) {
-      os.indent(1) << returns_to_string();
+      os << returns_to_string(l + 1) << "\n";
     }
     if (print_varargs) {
-      os.indent(1) << varargs_to_string();
+      os << varargs_to_string(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}" << "\n";
   }
 
-  void print() {
-    print(llvm::outs());
+  void print(int indent_level = 0) {
+    print(llvm::outs(), indent_level);
   }
 };
 

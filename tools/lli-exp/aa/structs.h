@@ -11,10 +11,11 @@
 
 #include "int.h"  // for u32
 
-#include "llvm/ADT/DenseMap.h" // for llvm::DenseMap
-#include "llvm/DerivedTypes.h" // for llvm::StructType
-#include "llvm/LLVMContext.h"  // for llvm::getGlobalContext
-#include "llvm/Type.h"         // for llvm::Type
+#include "llvm/ADT/DenseMap.h"    // for llvm::DenseMap
+#include "llvm/Assembly/Writer.h" // for llvm::WriteAsOperand
+#include "llvm/DerivedTypes.h"    // for llvm::StructType
+#include "llvm/LLVMContext.h"     // for llvm::getGlobalContext
+#include "llvm/Type.h"            // for llvm::Type
 #include "llvm/Support/raw_ostream.h"
 
 #include <vector>  // for std::vector
@@ -55,23 +56,23 @@ struct StructEmbeddedInfo {
   // field i in the expanded version of the structure.
   std::vector<u32> offsets;
 
-  std::string to_string() {
+  std::string to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
 
-    os << "struct info {" << "\n";    
-    os.indent(1) << "embedded fields: {" << "\n";
-    for (int i = 0; i < num_embedded_fields.size(); i++) {
-      os.indent(2) << "field: " << i << ", embedded: " << num_embedded_fields[i] << "\n";
+    os.indent(l) << "info {" << "\n";    
+    os.indent(l + 1) << "embedded fields: {" << "\n";
+    for (u32 i = 0; i < num_embedded_fields.size(); i++) {
+      os.indent(l + 2) << "field: " << i << ", embedded: " << num_embedded_fields[i] << "\n";
     }
-    os.indent(1) << "}" << "\n";
+    os.indent(l + 1) << "}" << "\n";
 
-    os.indent(1) << "offsets: {" << "\n";
-    for (int i = 0; i < offsets.size(); i++) {
-      os.indent(2) << "field: " << i << ", offset: " << offsets[i] << "\n";
+    os.indent(l + 1) << "offsets: {" << "\n";
+    for (u32 i = 0; i < offsets.size(); i++) {
+      os.indent(l + 2) << "field: " << i << ", offset: " << offsets[i] << "\n";
     }
-    os.indent(1) << "}" << "\n";
-    os << "}" << "\n";    
+    os.indent(l + 1) << "}" << "\n";
+    os.indent(l) << "}";
 
     return os.str();
   }
@@ -170,17 +171,33 @@ class Structs {
     return std::move(info);
   }
 
-  void print(llvm::raw_ostream &os) {
-    os << "Structs {" << "\n";
-    for (StructInfoMap::iterator i = struct_info_map.begin(),
-           e = struct_info_map.end(); i != e; i++) {
-      os.indent(1) << i.to_string() << "\n";
-    }
-    os << "}" << "\n";
+  std::string entry_to_string(const llvm::StructType *st,
+                              StructEmbeddedInfo info,
+                              int l = 0) {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    os.indent(l) << "struct {" << "\n";
+    os.indent(l + 1) << "type: ";
+    st->print(os);
+    os << "\n";
+    os << info.to_string(l + 1) << "\n";
+    os.indent(l) << "}";
+
+    return os.str();
   }
 
-  void print() {
-    print(llvm::outs());
+  void print(llvm::raw_ostream &os, int l = 0) {
+    os.indent(l) << "Structs {" << "\n";
+    for (StructInfoMap::iterator i = struct_info_map.begin(),
+           e = struct_info_map.end(); i != e; i++) {
+      os << entry_to_string(i->first, i->second, l + 1) << "\n";
+    }
+    os.indent(l) << "}" << "\n";
+  }
+
+  void print(int indent_level = 0) {
+    print(llvm::outs(), indent_level);
   }
 };
 

@@ -22,6 +22,31 @@
 #include "constraints.h"
 #include "nodes.h"
 
+void print_named_constraints(AnalysisSet *as, int l = 0) {
+  llvm::raw_ostream &os = llvm::outs();
+  
+  os.indent(l) << "Constraints {" << "\n";
+  for (Constraints::iterator i = as->constraints.begin(),
+         e = as->constraints.end(); i != e; ++i) {
+
+    Constraint c = *i;      
+    os.indent(l + 1) << "constraint {" << "\n";
+    os.indent(l + 2) << "type:\t\t" << c.type_string() << "\n";
+
+    Node *dest_node = as->nodes.find_node(c.dest);
+    os.indent(l + 2) << "(d)est:\t" << c.dest
+                     << dest_node->value_to_string(l + 2) << "\n";
+
+    Node *src_node = as->nodes.find_node(c.src);
+    os.indent(l + 2) << "(s)rc:\t" << c.src
+                     << src_node->value_to_string(l + 2) << "\n";
+    
+    os.indent(l + 2) << "offset:\t" << c.off << "\n";
+    os.indent(l + 1) << "}" << "\n";
+  }
+  os.indent(l) << "}" << "\n";  
+}
+
 static void assert_ret_next(AnalysisSet *as, u32 obj_node_id) {
   u32 ret_node_id = obj_node_id + FUNC_NODE_OFF_RET;
   assert(as->nodes.next == ret_node_id);  
@@ -557,6 +582,14 @@ void AnalysisSet::init(llvm::Module *m) {
     nodes.add_unreachable(nullptr, obj_sz);
   }
 
+  llvm::raw_ostream &os = llvm::outs();
+
+  os << "Step 1" << "\n";
+  os << "===========================================================" << "\n";
+  nodes.print();
+  print_named_constraints(this);
+  os << "\n";
+
   // Process function signatures. This means:
   //
   // + Add pointer and object nodes for functions with
@@ -577,6 +610,12 @@ void AnalysisSet::init(llvm::Module *m) {
   // constants or pointers to things that are already cached.
   init_function_signatures(m, this);
 
+  os << "Step 2" << "\n";
+  os << "===========================================================" << "\n";
+  nodes.print();
+  print_named_constraints(this);
+  os << "\n";
+
   // Process global signatures. This means:
   //
   // + Add a pointer node for each global variable. We treat
@@ -590,6 +629,12 @@ void AnalysisSet::init(llvm::Module *m) {
   //
   // Same as init_function_signatures.
   init_global_variable_signatures(m, this);
+
+  os << "Step 3" << "\n";
+  os << "===========================================================" << "\n";
+  nodes.print();
+  print_named_constraints(this);
+  os << "\n";
 
   // Process global variable values.
   //
@@ -606,9 +651,11 @@ void AnalysisSet::init(llvm::Module *m) {
   // that handled? Maybe that's a special case, but I don't see how
   // that is handled here.  
 
-  as->nodes.print();
-  as->constraints.print();
-  as->structs.print();
+  os << "Step 4" << "\n";
+  os << "===========================================================" << "\n";
+  nodes.print();
+  print_named_constraints(this);
+  structs.print();
 }
 
 // TODO:

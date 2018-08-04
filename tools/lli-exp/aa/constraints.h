@@ -12,6 +12,7 @@
 #include "int.h" // for u32
 
 #include "llvm/ADT/DenseMap.h"        // for llvm::DenseMap
+#include "llvm/ADT/DenseSet.h"        // for llvm::DenseSet
 #include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
 
 #include <set>    // for std::set
@@ -25,23 +26,6 @@ enum ConstraintType {
   ConstraintStore,      //  *d (+ off) = s;
   ConstraintGEP,        //   d = s + off
 };
-
-static std::string type_to_string(ConstraintType type) {
-  switch (type) {
-  case ConstraintAddrOf:
-    return "ADDR_OF (d = &s)";
-  case ConstraintCopy:
-    return "COPY (d = s)";
-  case ConstraintLoad:
-    return "LOAD (d = *s)";
-  case ConstraintStore:
-    return "STORE (*d = s)";
-  case ConstraintGEP:
-    return "GEP (d = s + off)";
-  default:
-    assert(false && "invalid type");
-  }
-}
 
 class Constraint {
 public:
@@ -92,16 +76,33 @@ public:
     return;
   }
 
-  std::string to_string() {
+  std::string type_string() {
+    switch (type) {
+    case ConstraintAddrOf:
+      return "ADDR_OF (d = &s)";
+    case ConstraintCopy:
+      return "COPY (d = s)";
+    case ConstraintLoad:
+      return "LOAD (d = *s)";
+    case ConstraintStore:
+      return "STORE (*d = s)";
+    case ConstraintGEP:
+      return "GEP (d = s + off)";
+    default:
+      assert(false && "invalid type");
+    }
+  }
+ 
+  std::string to_string(int l = 0) {
     std::string str;
     llvm::raw_string_ostream os(str);
 
-    os << "constraint {" << "\n";
-    os.indent(1) << "type:\t" << type_to_string(type) << "\n";
-    os.indent(1) << "(d)est:\t" << dest << "\n";
-    os.indent(1) << "(s)rc:\t" << src << "\n";
-    os.indent(1) << "offset:\t" << off << "\n";
-    os << "}";
+    os.indent(l) << "constraint {" << "\n";
+    os.indent(l + 1) << "type:\t\t" << type_string() << "\n";
+    os.indent(l + 1) << "(d)est:\t" << dest << "\n";
+    os.indent(l + 1) << "(s)rc:\t" << src << "\n";
+    os.indent(l + 1) << "offset:\t" << off << "\n";
+    os.indent(1) << "}";
     
     return os.str();
   }
@@ -113,6 +114,14 @@ class Constraints {
   typedef llvm::DenseSet<Constraint>::iterator iterator;
   
   Constraints() {}
+
+  iterator begin() {
+    return constraints.begin();
+  }
+
+  iterator end() {
+    return constraints.end();
+  }
 
   bool add(ConstraintType t, u32 dest, u32 src, u32 off = 0) {
     assert(src && dest);
@@ -127,21 +136,24 @@ class Constraints {
     Constraint c(t, dest, src, off);
     c.assert_valid();
     
+    typedef llvm::DenseSet<Constraint>::iterator iterator;
     std::pair<iterator, bool> result = constraints.insert(c);
-    return result->second;
+    return result.second;
   }
 
-  void print(llvm::raw_ostream &os) {
-    os << "Constraints {" << "\n";
+  void print(llvm::raw_ostream &os, int l = 0) {
+    os.indent(l) << "Constraints {" << "\n";
+    typedef llvm::DenseSet<Constraint>::iterator iterator;
     for (iterator i = constraints.begin(), e = constraints.end();
-         i != e; i++) {
-      os.indent(1) << i.to_string() << "\n";
+         i != e; ++i) {
+      Constraint c = *i;
+      os << c.to_string(l + 1) << "\n";
     }
-    os << "}" << "\n";
+    os.indent(l) << "}" << "\n";
   }
 
-  void print() {
-    print(llvm::out());
+  void print(int indent_level = 0) {
+    print(llvm::outs(), indent_level);
   }
 };
 
