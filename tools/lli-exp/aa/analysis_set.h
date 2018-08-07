@@ -21,17 +21,36 @@
 
 class AnalysisSet {
  public:
-  Nodes nodes;
-  Constraints constraints;
-  ExtInfo ext_info;
+  // State required for the analysis
+  // =======================================================
+  //
+  // These are llvm::Values, wrapped in metadata and loosely
+  // organized by type of node.
+  Nodes *nodes;
+
+  // These are memory-access relationships between two nodes
+  // (read: expresses loads, stores, copies, etc).
+  Constraints *constraints;
+
+  // This orders the constraints in a graph (read: expresses
+  // how loads and store preceed/succeed each other).
+  ConstraintGraph *cgraph;
+  
+  // Module metadata that speeds up the analysis
+  // =======================================================
   Structs structs;
-
-  std::set<u32> indirect_calls;
   llvm::DenseSet<llvm::Value *> addr_taken_args;
-  ConstraintInstMap indirect_constraints;
-  NodeMap deref_to_var_nodes;
+  std::map<string, u32> static_returns;
+  
+  // External stubs that makes the analysis more meaningful
+  // =======================================================
+  ExtInfo ext_info;
 
+  // Insert all of the nodes you ever need to insert from the
+  // module.
   AnalysisSet(llvm::Module *m) {
+    u32 max_size = 1000000000;
+    cgraph = ConstraintGraph(max_size);
     init(m);
   }
 

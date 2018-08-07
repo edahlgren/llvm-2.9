@@ -10,6 +10,7 @@
 #define CONSTRAINTS_H
 
 #include "int.h" // for u32
+#include "seg.h" // for SEG
 
 #include "llvm/ADT/DenseMap.h"        // for llvm::DenseMap
 #include "llvm/ADT/DenseSet.h"        // for llvm::DenseSet
@@ -110,17 +111,21 @@ public:
 
 class Constraints {
  public:
-  llvm::DenseSet<Constraint> constraints;
-  typedef llvm::DenseSet<Constraint>::iterator iterator;
+  std::vector<Constraint> constraints;
+  //llvm::DenseSet<Constraint> constraints;
+  typedef std::vector<Constraint>::iterator iterator;
   
   Constraints() {}
 
-  iterator begin() {
-    return constraints.begin();
+  iterator begin() { return constraints.begin(); }
+  iterator end() { return constraints.end(); }
+
+  Constraint *find(u32 index) {
+    return &constraints[index];
   }
 
-  iterator end() {
-    return constraints.end();
+  u32 size() {
+    return constraints.size();
   }
 
   bool add(ConstraintType t, u32 dest, u32 src, u32 off = 0) {
@@ -135,17 +140,22 @@ class Constraints {
 
     Constraint c(t, dest, src, off);
     c.assert_valid();
-    
-    typedef llvm::DenseSet<Constraint>::iterator iterator;
-    std::pair<iterator, bool> result = constraints.insert(c);
-    return result.second;
+
+    // We don't care about duplicate constraints in this case,
+    // if we did, we'd do:
+    //
+    //  typedef llvm::DenseSet<Constraint>::iterator iterator;
+    //  std::pair<iterator, bool> result = constraints.insert(c);
+    //  return result.second;
+    //
+    // Check back on this.
+    constraints.push_back(c);
+    return true;
   }
 
   void print(llvm::raw_ostream &os, int l = 0) {
     os.indent(l) << "Constraints {" << "\n";
-    typedef llvm::DenseSet<Constraint>::iterator iterator;
-    for (iterator i = constraints.begin(), e = constraints.end();
-         i != e; ++i) {
+    for (iterator i = begin(), e = end(); i != e; ++i) {
       Constraint c = *i;
       os << c.to_string(l + 1) << "\n";
     }
@@ -176,6 +186,71 @@ namespace llvm{
     }
   };
 }
+
+struct ConstraintGraphMetadata {
+  // Start nodes for BasicBlocks
+  std::map<llvm::BasicBlock *, u32> bb_start;
+  typedef std::map<llvm::BasicBlock *, u32>::iterator bb_iterator;
+
+  // (fun_start)
+  // Start nodes for Functions  
+  std::map<llvm::Function *, u32> func_start_nodes;
+
+  // (fun_ret)
+  // function -> return node
+  std::map<llvm::Function *, u32> func_ret_nodes;
+
+  // (fun_cs)
+  // callsite -> function targets
+  std::map<u32, std::vector<llvm::Function *> > func_callsites;
+
+  // (call_succ)
+  // callsite -> local successor
+  std::map<u32, u32> callsite_succ;
+
+  // (idr_cons)
+  // indices of constraints from idr calls
+  std::vector<u32> indirect_call_cons;
+
+  // (idr_calls)
+  // <idr call, callsite> pairs
+  std::vector<std::pair<llvm::CallInst *, u32> > indirect_call_pairs;
+
+  // (icall_cons)
+  llvm::DenseMap<Constraint, std::set<llvm::Instruction*>> ret_arg_call_cons;
+
+  // (ind_calls)
+  std::set<u32> indirect_call_func_nodes;
+};
+
+const u32 default_graph_max_size = 1000000000;
+
+class ConstraintGraph : public SEG {
+ public:
+  // Maps a store constraint to an SEG node, e.g.:
+  //
+  // i = store constraint index;
+  // defs[i] -> SEG node index.
+  std::vector<u32> defs;
+  
+  // Maps a load constraint to an SEG node, e.g.:
+  //
+  // i = load constraint index;
+  // defs[i] -> SEG node index.
+  std::vector<u32> uses;
+
+  llvm::DenseMap<u32, bool> uses_relevant_def;
+
+  // Temporary state.
+  // =============================================
+  ConstraintGraphMetadata *meta;
+
+   ConstraintGraph(u32 size, u32 max_size) : SEG(max_size) {
+    defs.assign(size);
+    uses.assign(size);
+    meta = new ConstraintGraphMetadata();
+  }
+};
 
 typedef std::pair<Constraint, std::set<llvm::Instruction *>> ConstraintInstSet;
 typedef llvm::DenseMap<Constraint, std::set<llvm::Instruction *>> ConstraintInstMap;

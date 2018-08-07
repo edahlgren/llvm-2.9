@@ -152,8 +152,10 @@ public:
     return r;
   }
 
-  void add_unreachable(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
-    nodes.push_back(new Node(v, obj_sz, weak));    
+  u32 add_unreachable(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
+    u32 index = nodes.size();
+    nodes.push_back(new Node(v, obj_sz, weak));
+    return index;
   }
 
   u32 add_value(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
@@ -262,6 +264,57 @@ public:
     return i->second;
   }
   
+  u32 find_value_node_const_ptr(llvm::Value *v) {
+    assert(v);
+    
+    u32 node_id = as->nodes->find_value_node(v, true);
+    if (node_id) {
+      return node_id;
+    }
+
+    llvm::Constant *c = llvm::dyn_cast<llvm::Constant>(v);
+    assert(c && llvm::isa<llvm::PointerType>(c->getType()) &&
+           "value without node is not a const pointer");
+    assert(!llvm::isa<llvm::GlobalValue>(c) &&
+           "global const pointer has no node");
+
+    if (llvm::isa<llvm::ConstantPointerNull>(c) ||
+        llvm::isa<llvm::UndefValue>(c)) {
+      return 0;
+    }
+
+    llvm::ConstantExpr *e = llvm::dyn_cast<llvm::ConstantExpr>(c);
+    assert(e && "unknown const pointer type");
+
+    switch (e->getOpcode()) {
+    case llvm::Instruction::BitCast:
+      return find_val_node_const_ptr(e->getOperand(0));
+      
+    case llvm::Instruction::IntToPtr:
+      process_int2ptr(as, bs, e);
+      return find_value_node(e);
+
+    case llvm::Instruction::GetElementPtr:
+      if (llvm:isa<llvm::ConstantPointerNull>(e->getOperand(0))) {
+        if(e->getNumOperands() > 2)
+          return 0;
+
+        process_int2ptr(as, bs, e);
+        return find_value_node(e);
+      }
+      assert(false && "unexpected getelementptr const expression");
+      
+    default:
+      assert(false && "unknown opcode in const pointer expression");
+    }
+
+    return 0;
+  }
+    
+  bool contains_value(llvm::Value *v) {
+    return value_nodes.count(v) != 0;
+  }
+
   u32 pe(llvm::Value* v) {
     u32 n = find_value_node(v, true);
     if (!n)
