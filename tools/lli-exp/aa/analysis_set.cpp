@@ -5,19 +5,25 @@
 // Description ...
 //
 //===----------------------------------------------------------------------===//
-#include "llvm/Argument.h"        // for llvm::Argument
-#include "llvm/Constants.h"       // for llvm::ConstantExpr
-#include "llvm/DerivedTypes.h"    // for llvm::StructType, llvm::PointerType
-#include "llvm/Instructions.h"    // for llvm::CallInst, llvm::InvokeInst,
-                                  //     llvm::CmpInst
-#include "llvm/GlobalVariable.h"  // for llvm::Type
-#include "llvm/Module.h"          // for llvm::Function
-#include "llvm/Type.h"            // for llvm::Type
-#include "llvm/TypeSymbolTable.h" // for llvm::TypeSymbolTable
-#include "llvm/Value.h"           // for llvm::Value
-#include "llvm/Support/Casting.h" // for llvm::dyn_cast, llvm::isa
+#include "llvm/Argument.h"         // for llvm::Argument
+#include "llvm/Constants.h"        // for llvm::ConstantExpr
+#include "llvm/DerivedTypes.h"     // for llvm::StructType, llvm::PointerType
+#include "llvm/Instructions.h"     // for llvm::CallInst, llvm::InvokeInst,
+                                   //     llvm::CmpInst
+#include "llvm/GlobalVariable.h"   // for llvm::Type
+#include "llvm/LLVMContext.h"      // for llvm::getGlobalContext
+#include "llvm/Module.h"           // for llvm::Function
+#include "llvm/Type.h"             // for llvm::Type
+#include "llvm/TypeSymbolTable.h"  // for llvm::TypeSymbolTable
+#include "llvm/Value.h"            // for llvm::Value
+#include "llvm/Support/CallSite.h" // for llvm::CallSite
+#include "llvm/Support/Casting.h"  // for llvm::dyn_cast, llvm::isa
+#include "llvm/Support/CFG.h"      // for llvm::succ_begin, llvm::succ_end
 #include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/InstIterator.h"
+
+#include <algorithm> // for std::min
+#include <utility>   // for std::pair, std::make_pair
 
 #include "analysis_set.h"
 #include "constraints.h"
@@ -27,7 +33,7 @@ static bool is_pointer(llvm::Value *v) {
   return llvm::isa<llvm::PointerType>(v->getType());    
 }
 
-static bool is_pointer(llvm::Type *t) {
+static bool is_pointer(const llvm::Type *t) {
   return llvm::isa<llvm::PointerType>(t);
 }
 
@@ -244,16 +250,16 @@ static bool is_int_to_ptr(llvm::ConstantExpr *expr) {
   return expr && expr->getOpcode() == llvm::Instruction::IntToPtr;
 }
 
-static llvm::IntToPtrInst *get_int_to_ptr(llvm::Instruction *inst) {
-  return llvm::dyn_cast<llvm::IntToPtrInst>(inst);
+static llvm::IntToPtrInst *get_int_to_ptr(llvm::Value *v) {
+  return llvm::dyn_cast<llvm::IntToPtrInst>(v);
 }
 
 static bool is_gep(llvm::ConstantExpr *expr) {
   return expr && expr->getOpcode() == llvm::Instruction::GetElementPtr;
 }
 
-static llvm::GetElementPtrInst *get_gep(llvm::Instruction *inst) {
-  return llvm::dyn_cast<llvm::GetElementPtrInst>(inst);
+static llvm::GetElementPtrInst *get_gep(llvm::Value *v) {
+  return llvm::dyn_cast<llvm::GetElementPtrInst>(v);
 }
 
 static llvm::ConstantExpr *get_const_expr(llvm::Value *v) {
@@ -266,6 +272,14 @@ static llvm::Instruction *get_inst(llvm::Value *v) {
 
 static llvm::GlobalVariable *get_global(llvm::Value *v) {
   return llvm::dyn_cast<llvm::GlobalVariable>(v);
+}
+
+static llvm::BitCastInst *get_bitcast(llvm::Value *v) {
+  return llvm::dyn_cast<llvm::BitCastInst>(v);
+}
+
+static llvm::User *get_user(llvm::Value *v) {
+  return llvm::dyn_cast<llvm::User>(v);
 }
 
 static void assert_valid_const_expr(llvm::ConstantExpr *expr) {  
@@ -596,7 +610,9 @@ public:
   std::map<llvm::BasicBlock *, u32> cache;
 };
 
-static void init_pointer_instructions_nodes(llvm::Function *f) {
+static void init_pointer_instruction_nodes(AnalysisSet *as,
+                                           llvm::Function *f) {
+  
   for (llvm::inst_iterator ii = llvm::inst_begin(f),
          ei = llvm::inst_end(f); ii != ei; ii++) {
     llvm::Instruction *inst = &*ii;
@@ -609,9 +625,9 @@ static void init_pointer_instructions_nodes(llvm::Function *f) {
 class BlockState {
 public:
   llvm::BasicBlock *block;
+  u32 position;
   bool contains_call;
   u32 constraints_sz;
-  u32 position;
 
   BlockState(llvm::BasicBlock *bb, u32 position) :
     block(bb),
@@ -620,13 +636,16 @@ public:
     constraints_sz(0) {}
 };
 
-static void process_load(AnalysisSet *as, BlockState *bs,
+u32 find_value_node_const_ptr(AnalysisSet *as, llvm::Value *v);
+
+static void process_load(AnalysisSet *as,
                          llvm::Instruction *inst) {
+  
   assert(inst);
   llvm::LoadInst *li = llvm::cast<llvm::LoadInst>(inst);
 
   u32 node_id = as->nodes->find_value_node(li);
-  u32 sub_node_id = as->nodes->find_value_node_const_ptr(li->getOperand(0));
+  u32 sub_node_id = find_value_node_const_ptr(as, li->getOperand(0));
   if (!sub_node_id) {
     return;
   }
@@ -634,8 +653,9 @@ static void process_load(AnalysisSet *as, BlockState *bs,
   as->constraints->add(ConstraintLoad, node_id, sub_node_id);
 }
 
-static void process_store(AnalysisSet *as, BlockState *bs,
+static void process_store(AnalysisSet *as,
                           llvm::Instruction *inst) {
+
   assert(inst);
   llvm::StoreInst *si = llvm::cast<llvm::StoreInst>(inst);
 
@@ -645,14 +665,15 @@ static void process_store(AnalysisSet *as, BlockState *bs,
   if (!is_pointer(src->getType()))
     return;
 
-  u32 sub_dest_id = as->nodes->find_value_node_const_ptr(dest);
-  u32 sub_src_id = as->nodes->find_value_node_const_ptr(src);
+  u32 sub_dest_id = find_value_node_const_ptr(as, dest);
+  u32 sub_src_id = find_value_node_const_ptr(as, src);
 
   if (sub_src_id && sub_dest_id)
     as->constraints->add(ConstraintStore, sub_dest_id, sub_src_id);
 }
 
-static llvm::Type *trace_alloc_type(llvm::Instruction *inst) {
+static const llvm::Type *trace_alloc_type(AnalysisSet *as,
+                                    llvm::Instruction *inst) {
   assert(inst);
 
   const llvm::Type *mt = inst->getType()->getContainedType(0);
@@ -661,11 +682,11 @@ static llvm::Type *trace_alloc_type(llvm::Instruction *inst) {
   
   u32 msz = 0;
   if (const llvm::StructType *st= llvm::dyn_cast<llvm::StructType>(mt))
-    msz = as->structs.get_struct_sz(st).size();
+    msz = as->structs.get_sz(st).size();
 
   bool found = 0;
-  for (llvm::Value::use_iterator it= I->use_begin(), ie= I->use_end();
-       it != ie; ++it) {
+  for (llvm::Value::use_iterator it= inst->use_begin(),
+         ie = inst->use_end(); it != ie; ++it) {
     
     llvm::CastInst *ci= llvm::dyn_cast<llvm::CastInst>(*it);
     if (!ci || !llvm::isa<llvm::PointerType>(ci->getType()))
@@ -679,7 +700,7 @@ static llvm::Type *trace_alloc_type(llvm::Instruction *inst) {
       t = at->getElementType();
     
     if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t))
-      sz= as->strucuts.get_struct_sz(st).size();
+      sz= as->structs.get_sz(st).size();
     
     if (sz > msz) {
       msz = sz;
@@ -696,10 +717,10 @@ static llvm::Type *trace_alloc_type(llvm::Instruction *inst) {
 static void process_callee(AnalysisSet *as, u32 node_id,
                            llvm::Function *f) {
 
-  llvm::Value *v = as->nodes[node_id]->val;
-  if (f && as->ext_info->no_struct_alloc(f)) {
-    u32 obj_id = as->add_object(v, 1, true);
-    as->constraints->add(ConstraintsAddrOf, node_id, obj_id);
+  llvm::Value *v = as->nodes->find_node(node_id)->val;
+  if (f && as->ext_info.no_struct_alloc(f)) {
+    u32 obj_id = as->nodes->add_object(v, 1, true);
+    as->constraints->add(ConstraintAddrOf, node_id, obj_id);
     return;
   }
 
@@ -707,18 +728,17 @@ static void process_callee(AnalysisSet *as, u32 node_id,
   assert(inst);
   llvm::CallSite cs(inst);
   
-  if (!f || as->ext_info->is_alloc(f) ||
-      (as->ext_info->get_type(f) == EFT_REALLOC &&
+  if (!f || as->ext_info.is_alloc(f) ||
+      (as->ext_info.get_type(f) == EFT_REALLOC &&
        llvm::isa<llvm::ConstantPointerNull>(cs.getArgument(0)))) {
 
-    const llvm::Type *t = trace_alloc_type(inst);
-    u32 obj_id = as->add_object(inst);
+    const llvm::Type *t = trace_alloc_type(as, inst);
 
     u32 obj_id = NodeNone;
     if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)) {
-      const std::vector<u32> &sz= as->structs.get_struct_sz(st);
+      const std::vector<u32> &sz= as->structs.get_sz(st);
 
-      for (int i = 0; i < sz.size(); i++) {
+      for (u32 i = 0; i < sz.size(); i++) {
         u32 _obj_id = as->nodes->add_object(inst, sz[i], true);         
         if (obj_id != NodeNone)
           obj_id = _obj_id;
@@ -732,30 +752,30 @@ static void process_callee(AnalysisSet *as, u32 node_id,
     return;
   }
 
-  if (as->ext_info->has_static(f)) {
-    bool _static = as->ext_info->has_static(f);
-    string func_name = f->getNameStr();
+  if (as->ext_info.has_static(f)) {
+    bool _static = as->ext_info.has_static2(f);
+    std::string func_name = f->getNameStr();
     
-    std::map<string, u32>::const_iterator i_srn =
-      as->stat_ret_node.find(func_name);
+    std::map<std::string, u32>::const_iterator i_srn =
+      as->static_returns.find(func_name);
 
     u32 obj_id = NodeNone;
-    if (i_srn != as->stat_ret_node.end()) {
+    if (i_srn != as->static_returns.end()) {
       obj_id = i_srn->second;
       as->constraints->add(ConstraintAddrOf, node_id, obj_id);
       return;
     }
 
     if (_static) {
-      obj_id = as->add_object(inst, 2, true);
-      as->add_object(inst, 1, true);
+      obj_id = as->nodes->add_object(inst, 2, true);
+      as->nodes->add_object(inst, 1, true);
       as->constraints->add(ConstraintAddrOf, node_id, obj_id);
     } else {
       const llvm::Type *t = inst->getType()->getContainedType(0);
       if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)) {
-        const std::vector<u32> &sz= as->structs.get_struct_sz(st);
+        const std::vector<u32> &sz= as->structs.get_sz(st);
         
-        for (int i = 0; i < sz.size(); i++) {
+        for (u32 i = 0; i < sz.size(); i++) {
           u32 _obj_id = as->nodes->add_object(inst, sz[i], true);         
           if (obj_id != NodeNone)
             obj_id = _obj_id;
@@ -765,13 +785,13 @@ static void process_callee(AnalysisSet *as, u32 node_id,
       }
     }
     
-    as->stat_ret_node[func_name] = obj_id;
+    as->static_returns[func_name] = obj_id;
     as->constraints->add(ConstraintAddrOf, node_id, obj_id);
   }
 }
 
 static u32 eft_la_num_args(AnalysisSet *as, llvm::Function *f) {
-  switch(as->ext_info->get_type(f)) {
+  switch(as->ext_info.get_type(f)) {
   case EFT_L_A0:
     return 0;
   case EFT_L_A1:
@@ -785,22 +805,62 @@ static u32 eft_la_num_args(AnalysisSet *as, llvm::Function *f) {
   }
 }
 
+u32 get_max_offset(AnalysisSet *as, llvm::Value *v) {
+  
+  const llvm::Type *t = v->getType();
+
+  const llvm::IntegerType *min_int =
+    llvm::Type::getInt8Ty(llvm::getGlobalContext());
+  assert(is_pointer(t) && t->getContainedType(0) == min_int);
+
+  if (llvm::ConstantExpr *expr = get_const_expr(v)) {
+    t = expr->getOperand(0)->getType();
+  } else if (llvm::BitCastInst *bi = get_bitcast(v)) {
+    t = bi->getOperand(0)->getType();
+  } else if (llvm::User *u = get_user(v)) {
+    u32 msz = 1;
+    for(llvm::User::op_iterator it= u->op_begin(), ie= u->op_end();
+        it != ie; ++it){
+      
+      llvm::Value *v= it->get();
+      t = v->getType();
+      
+      if (!is_pointer(t))
+        continue;
+      
+      t = t->getContainedType(0);
+      while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(t))
+        t = at->getElementType();
+      
+      if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)){
+        u32 sz = as->structs.get_sz(st).size();
+        if (msz < sz)
+          msz = sz;
+      }
+    }
+    return msz;
+  }
+
+  return 1;
+}
+
 static void add_load_store_cons(AnalysisSet *as,
                                 llvm::Value *dest,
                                 llvm::Value *src,
                                 u32 size = 0) {
     assert(dest && src);
-    u32 dest_index = as->find_value_node_const_ptr(dest);
-    u32 src_index = as->find_value_node_const_ptr(src);
+    u32 dest_index = find_value_node_const_ptr(as, dest);
+    u32 src_index = find_value_node_const_ptr(as, src);
 
     if (!dest_index || !src_index)
       return;      
 
     if (!size) {
-      size = min(get_max_offset(dest), get_max_offset(src));
+      size = std::min(get_max_offset(as, dest),
+                      get_max_offset(as, src));
     }
     
-    for (int i = 0; i < size; i++) {
+    for (u32 i = 0; i < size; i++) {
       u32 tnode_id = as->nodes->add_unreachable(0);
       as->constraints->add(ConstraintLoad, tnode_id, src_index, i);
       as->constraints->add(ConstraintStore, dest_index, tnode_id, i);
@@ -817,7 +877,7 @@ static void process_EFT_L_A(AnalysisSet *as,
   if (!is_pointer(inst))
     return;
 
-  u32 node_id = as->find_value_node(inst);
+  u32 node_id = as->nodes->find_value_node(inst);
   u32 i_arg = eft_la_num_args(as, f);
 
   llvm::Value *src= cs.getArgument(i_arg);
@@ -826,7 +886,7 @@ static void process_EFT_L_A(AnalysisSet *as,
     return;
   }
 
-  u32 sub_node_id = as->find_value_node_const_ptr(src);
+  u32 sub_node_id = find_value_node_const_ptr(as, src);
   if (sub_node_id)
     as->constraints->add(ConstraintCopy, node_id, sub_node_id);
 }
@@ -869,10 +929,10 @@ static void process_EFT_A1R_A0(AnalysisSet *as,
                                llvm::Function *f) {
   
   llvm::Value *dest = cs.getArgument(1);
-  u32 dest_index = as->find_value_node_const_ptr(dest);
+  u32 dest_index = find_value_node_const_ptr(as, dest);
 
   llvm::Value *src = cs.getArgument(0);
-  u32 src_index = as->find_value_node_const_ptr(src);
+  u32 src_index = find_value_node_const_ptr(as, src);
   
   if (dest_index && src_index)
     as->constraints->add(ConstraintStore, dest_index, src_index);
@@ -883,10 +943,10 @@ static void process_EFT_A2R_A1(AnalysisSet *as,
                                llvm::Function *f) {
   
   llvm::Value *dest = cs.getArgument(2);
-  u32 dest_index = as->find_value_node_const_ptr(dest);
+  u32 dest_index = find_value_node_const_ptr(as, dest);
 
   llvm::Value *src = cs.getArgument(1);
-  u32 src_index = as->find_value_node_const_ptr(src);
+  u32 src_index = find_value_node_const_ptr(as, src);
   
   if (dest_index && src_index)
     as->constraints->add(ConstraintStore, dest_index, src_index);
@@ -897,10 +957,10 @@ static void process_EFT_A4R_A1(AnalysisSet *as,
                                llvm::Function *f) {
 
   llvm::Value *dest = cs.getArgument(4);
-  u32 dest_index = as->find_value_node_const_ptr(dest)
+  u32 dest_index = find_value_node_const_ptr(as, dest);
 
   llvm::Value *src = cs.getArgument(1);
-  u32 src_index = as->find_value_node_const_ptr(src);
+  u32 src_index = find_value_node_const_ptr(as, src);
   
   if (dest_index && src_index)
     as->constraints->add(ConstraintStore, dest_index, src_index);
@@ -919,23 +979,23 @@ static void process_EFT_L_A0__A2R_A0(AnalysisSet *as,
       as->constraints->add(ConstraintAddrOf, node_id,
                            NodeUnknownTarget);
     } else {
-      u32 sub_node_id = as->nodes->find_value_node_const_ptr(src);
+      u32 sub_node_id = find_value_node_const_ptr(as, src);
       if (sub_node_id)
         as->constraints->add(ConstraintCopy, node_id, sub_node_id);
     }
   }
 
   llvm::Value *dest = cs.getArgument(2);
-  u32 node_id = as->nodes->find_value_node_const_ptr(dest);
+  u32 node_id = find_value_node_const_ptr(as, dest);
 
   llvm::Value *src = cs.getArgument(0);
-  u32 sub_node_id = as->nodes->find_value_node_const_ptr(src);
+  u32 sub_node_id = find_value_node_const_ptr(as, src);
   if (node_id && sub_node_id)
     as->constraints->add(ConstraintStore, node_id, sub_node_id);
 }
 
 static u32 eft_a_new_num_args(AnalysisSet *as, llvm::Function *f) {
-  switch(as->ext_info->get_type(f)) {
+  switch(as->ext_info.get_type(f)) {
   case EFT_A1R_NEW:
     return 1;
   case EFT_A2R_NEW:
@@ -956,9 +1016,9 @@ static void process_EFT_A_NEW(AnalysisSet *as,
   u32 i_arg = eft_a_new_num_args(as, f);
 
   llvm::Value *dest = cs.getArgument(i_arg);
-  u32 dest_node_id = as->nodes->find_value_node_const_ptr(dest);
+  u32 dest_node_id = find_value_node_const_ptr(as, dest);
   if (!dest_node_id)
-    break;
+    return;
 
   const llvm::Type *t = dest->getType()->getContainedType(0);
   assert(is_pointer(t));
@@ -969,7 +1029,7 @@ static void process_EFT_A_NEW(AnalysisSet *as,
 
   u32 obj_id = NodeNone;
   if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)) {
-    const std::vector<u32> &sz= as->structs.get_struct_sz(st);
+    const std::vector<u32> &sz= as->structs.get_sz(st);
     //  FIXME: X/0 shouldn't really have a value because it's not
     //  pointed to by any program variable, but for now we require
     //  all obj_nodes to have one.
@@ -983,7 +1043,7 @@ static void process_EFT_A_NEW(AnalysisSet *as,
   }
   assert(obj_id != NodeNone);
   
-  u32 node_id = as->nodes->add_unreachable();
+  u32 node_id = as->nodes->add_unreachable(0);
   as->constraints->add(ConstraintAddrOf, node_id, obj_id);
   as->constraints->add(ConstraintStore, dest_node_id, node_id);
 }
@@ -992,11 +1052,11 @@ static void process_external_call(AnalysisSet *as,
                                   llvm::CallSite &cs,
                                   llvm::Function *f) {
   
-  assert(f && as->ext_info->is_ext(f));  
-  if (as->ext_info->is_alloc(f) || as->ext_info->has_static(f))
+  assert(f && as->ext_info.is_ext(f));  
+  if (as->ext_info.is_alloc(f) || as->ext_info.has_static(f))
     return;
 
-  extf_t tF = as->ext_info->get_type(f);
+  ExternalFunctionType tF = as->ext_info.get_type(f);
   switch (tF){
   case EFT_REALLOC:
     if (is_const_null_ptr(cs.getArgument(0)))
@@ -1115,7 +1175,7 @@ static void process_direct_call(AnalysisSet *as,
         as->constraints->add(ConstraintAddrOf, va_node_id,
                              NodeUnknownTarget);
       } else {
-        u32 aa_node_id = as->nodes->find_value_node_const_ptr(aa);
+        u32 aa_node_id = find_value_node_const_ptr(as, aa);
         if (aa_node_id)
           as->constraints->add(ConstraintCopy, va_node_id, aa_node_id);
       }
@@ -1134,15 +1194,11 @@ static void process_indirect_call(AnalysisSet *as,
     return;
 
   llvm::Instruction * inst = cs.getInstruction();
-  u32 called_id = as->nodes->find_value_node_const_ptr(called);
+  u32 called_id = find_value_node_const_ptr(as, called);
   assert(called_id && "null callee");
   
-  //The callee may be an i2p const.expr.
-  u32 vnC= get_val_node_cptr(C);
-  assert(vnC && "null callee");
-
   ConstraintGraphMetadata *meta = as->cgraph->meta;
-  meta->indirect_calls.insert(called_id);
+  meta->indirect_call_func_nodes.insert(called_id);
 
   if (is_pointer(cs.getType())) {
     u32 node_id = as->nodes->find_value_node(inst);
@@ -1168,7 +1224,7 @@ static void process_indirect_call(AnalysisSet *as,
                    NodeConstToUnknownTarget, arg_offset);
       meta->ret_arg_call_cons[c].insert(inst);
     } else {
-      u32 aa_node_id = as->nodes->find_value_node_const_ptr(aa);
+      u32 aa_node_id = find_value_node_const_ptr(as, aa);
       if (aa_node_id) {      
         as->constraints->add(ConstraintStore, called_id,
                              aa_node_id, arg_offset);
@@ -1180,7 +1236,7 @@ static void process_indirect_call(AnalysisSet *as,
   }  
 }
 
-static void process_call(AnalysisSet *as, BlockState *bs,
+static void process_call(AnalysisSet *as,
                          llvm::Instruction *inst) {
   assert(inst);
   llvm::CallSite cs(inst);
@@ -1196,7 +1252,7 @@ static void process_call(AnalysisSet *as, BlockState *bs,
 
   u32 node_id = as->nodes->find_value_node(inst, true);
   if (node_id) {
-    process_callee(node_id, f);
+    process_callee(as, node_id, f);
   }
 
   if (f) {
@@ -1213,7 +1269,7 @@ static void process_return(AnalysisSet *as, BlockState *bs,
                            llvm::Instruction *inst) {
 
   assert(inst);
-  llvm::ReturnInst *ri = llvm::cast<llvm:ReturnInst>(inst);
+  llvm::ReturnInst *ri = llvm::cast<llvm::ReturnInst>(inst);
 
   if (!ri->getNumOperands())
     return;
@@ -1225,7 +1281,7 @@ static void process_return(AnalysisSet *as, BlockState *bs,
   llvm::Function *f = ri->getParent()->getParent();
 
   u32 ret_node_id = as->nodes->find_ret_node(f),
-    src_node_id = as->nodes->find_value_node_const_ptr(src);
+    src_node_id = find_value_node_const_ptr(as, src);
 
   assert(ret_node_id);
   if (src_node_id)
@@ -1237,39 +1293,33 @@ static void process_return(AnalysisSet *as, BlockState *bs,
   }
 
   ConstraintGraphMetadata *meta = as->cgraph->meta;  
-  assert(!meta->func_ret_nodes.count(bs->bb->getParent()));
-  meta->func_ret_nodes[bs->bb->getParent()] = bs->position;
+  assert(!meta->func_ret_nodes.count(bs->block->getParent()));
+  meta->func_ret_nodes[bs->block->getParent()] = bs->position;
 }
 
-static void process_alloc(AnalysisSet *as, BlockState *bs,
+static void process_alloc(AnalysisSet *as,
                           llvm::Instruction *inst) {
 
   assert(inst);
   
-  llvm::AllocationInst *ai = llvm::cast<llvm::AllocationInst>(inst);
+  llvm::AllocaInst *ai = llvm::cast<llvm::AllocaInst>(inst);
   u32 node_id = as->nodes->find_value_node(ai);
 
-  const llvm::Type *t = 0;
+  // Find out which type of data was allocated.
   bool weak =  false;
+  const llvm::Type *t = ai->getAllocatedType();
 
-  //Find out which type of data was allocated.
-  if (llvm::MallocInst *mi = llvm::dyn_cast<llvm::MallocInst>(ai)) {
+  // An array is considered the same as 1 element.
+  while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(t)) {
     weak = true;
-    t = trace_alloc_type(mi);
-  } else {
-    t = ai->getAllocatedType();
-    //An array is considered the same as 1 element.
-    while (const llvm::ArrayType *at = llvm::dyn_cast<llvm::ArrayType>(t)) {
-      weak = true;
-      t = at->getElementType();
-    }
+    t = at->getElementType();
   }
 
   u32 obj_id = NodeNone;
   if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)) {
-    const std::vector<u32> &sz= as->structs.get_struct_sz(st);
+    const std::vector<u32> &sz= as->structs.get_sz(st);
     
-    for (int i = 0; i < sz.size(); i++) {
+    for (u32 i = 0; i < sz.size(); i++) {
       u32 _obj_id = as->nodes->add_object(ai, sz[i], weak);         
       if (obj_id != NodeNone)
         obj_id = _obj_id;
@@ -1284,7 +1334,7 @@ static void process_alloc(AnalysisSet *as, BlockState *bs,
 static bool trace_int(llvm::Value *v,
                       llvm::DenseSet<llvm::Value *> &src,
                       llvm::DenseMap<llvm::Value *, bool> &seen,
-                      u32 depth) {
+                      u32 depth = 0) {
 
   llvm::DenseMap<llvm::Value *, bool>::iterator i_seen = seen.find(v);
   if(i_seen != seen.end())
@@ -1305,12 +1355,12 @@ static bool trace_int(llvm::Value *v,
     return true;
   } else if (llvm::ConstantExpr *ce = get_const_expr(v)) {
     opcode = ce->getOpcode();
-    for (int i = 0; i < ce->getNumOperands(); i++) {
+    for (u32 i = 0; i < ce->getNumOperands(); i++) {
       ops.push_back(ce->getOperand(i));
     }
   } else if (llvm::Instruction *inst = get_inst(v)) {
     opcode = inst->getOpcode();
-    for (int i = 0; i < inst->getNumOperands(); i++) {
+    for (u32 i = 0; i < inst->getNumOperands(); i++) {
       ops.push_back(inst->getOperand(i));
     }
   } else {
@@ -1321,26 +1371,26 @@ static bool trace_int(llvm::Value *v,
   
   assert(opcode);
   switch (opcode){
-  case Instruction::Invoke:
-  case Instruction::FPToUI:
-  case Instruction::FPToSI:
-  case Instruction::ICmp:
-  case Instruction::FCmp:
-  case Instruction::Call:
-  case Instruction::VAArg:
-  case Instruction::ExtractElement:
+  case llvm::Instruction::Invoke:
+  case llvm::Instruction::FPToUI:
+  case llvm::Instruction::FPToSI:
+  case llvm::Instruction::ICmp:
+  case llvm::Instruction::FCmp:
+  case llvm::Instruction::Call:
+  case llvm::Instruction::VAArg:
+  case llvm::Instruction::ExtractElement:
     seen[v] = true;
     return true;
     
-  case Instruction::PtrToInt:
+  case llvm::Instruction::PtrToInt:
     src.insert(ops[0]);
     return false;
     
-  case Instruction::Load:
+  case llvm::Instruction::Load: {
     if (llvm::GlobalVariable *g = get_global(ops[0])) {
       if (g->hasInitializer() && g->isConstant()) {
         llvm::Value *gi = g->getInitializer();
-        r = trace_init(gi, src, seen, depth + 1);
+        r = trace_int(gi, src, seen, depth + 1);
         if (r)
           seen[v] = true;
 
@@ -1355,7 +1405,7 @@ static bool trace_int(llvm::Value *v,
     bool found = false;
     llvm::BasicBlock *bb = li0->getParent();
     for (llvm::BasicBlock::iterator it = bb->begin(), ie = bb->end();
-         !found && it != end; ++it) {
+         !found && it != ie; ++it) {
       if (llvm::StoreInst *si = llvm::dyn_cast<llvm::StoreInst>(it)) {
         if (si->getPointerOperand() == addr)
           s = si->getOperand(0);
@@ -1375,14 +1425,15 @@ static bool trace_int(llvm::Value *v,
 
     seen[v] = true;
     return true;
- 
-  case Instruction::Shl:
-  case Instruction::LShr:
-  case Instruction::AShr:
-  case Instruction::Trunc:
-  case Instruction::ZExt:
-  case Instruction::SExt:
-  case Instruction::BitCast:
+  }
+    
+  case llvm::Instruction::Shl:
+  case llvm::Instruction::LShr:
+  case llvm::Instruction::AShr:
+  case llvm::Instruction::Trunc:
+  case llvm::Instruction::ZExt:
+  case llvm::Instruction::SExt:
+  case llvm::Instruction::BitCast: {
     const llvm::Type *tr = ops[0]->getType();
     if (llvm::isa<llvm::IntegerType>(tr)) {
       r = trace_int(ops[0], src, seen, depth + 1);
@@ -1390,29 +1441,30 @@ static bool trace_int(llvm::Value *v,
         seen[v] = true;
       
       return r;
-    } else {
-      assert(opcode == llvm::Instruction::BitCast &&
-             "invalid operand for int insn");
-
-      llvm::Type::TypeID t = tr->getTypeID();
-      assert(t == llvm::Type::FloatTyID ||
-             t == llvm::Type::DoubleTyID &&
-             "invalid cast to int");
-
-      seen[v] = true;
-      return true;
     }
 
-  case Instruction::Add:
-  case Instruction::Sub:
-  case Instruction::Mul:
-  case Instruction::UDiv:
-  case Instruction::SDiv:
-  case Instruction::URem:
-  case Instruction::SRem:
-  case Instruction::And:
-  case Instruction::Or:
-  case Instruction::Xor:
+    assert(opcode == llvm::Instruction::BitCast &&
+           "invalid operand for int insn");
+
+    llvm::Type::TypeID t = tr->getTypeID();
+    assert((t == llvm::Type::FloatTyID ||
+            t == llvm::Type::DoubleTyID) &&
+           "invalid cast to int");
+
+    seen[v] = true;
+    return true;
+  }
+
+  case llvm::Instruction::Add:
+  case llvm::Instruction::Sub:
+  case llvm::Instruction::Mul:
+  case llvm::Instruction::UDiv:
+  case llvm::Instruction::SDiv:
+  case llvm::Instruction::URem:
+  case llvm::Instruction::SRem:
+  case llvm::Instruction::And:
+  case llvm::Instruction::Or:
+  case llvm::Instruction::Xor:
     r = trace_int(ops[0], src, seen, depth + 1) &
       trace_int(ops[1], src, seen, depth + 1);
     if (r)
@@ -1420,9 +1472,9 @@ static bool trace_int(llvm::Value *v,
     
     return r;
 
-  case Instruction::PHI:
+  case llvm::Instruction::PHI:
     r = false;
-    for (int i = 0; i < ops.size(); i++) {
+    for (u32 i = 0; i < ops.size(); i++) {
       //Sometimes a pointer or other value can come into an
       // int-type phi node.
       const llvm::Type *t = ops[i]->getType();
@@ -1440,7 +1492,7 @@ static bool trace_int(llvm::Value *v,
     
     return r;
     
-  case Instruction::Select:
+  case llvm::Instruction::Select:
     r = trace_int(ops[0], src, seen, depth + 1) |
       trace_int(ops[1], src, seen, depth + 1);
     
@@ -1457,29 +1509,30 @@ static bool trace_int(llvm::Value *v,
   return false;
 }
 
-static void process_int2ptr(AnalysisSet *as, BlockState *bs,
-                            llvm::Instruction *inst) {
+static void process_int2ptr(AnalysisSet *as,
+                            llvm::Value *v) {
 
-  assert(inst);
+  assert(v);
 
   u32 dest_id = 0;
   llvm::Value *op = 0;
 
-  if (llvm::IntToPtrInst *ii = get_int_to_ptr(inst)) {
+  if (llvm::IntToPtrInst *ii = get_int_to_ptr(v)) {
     dest_id = as->nodes->find_value_node(ii);
     op = ii->getOperand(0);    
-  } else if (llvm::GetElementPtrInst *gi = get_gep(inst)) {
+  } else if (llvm::GetElementPtrInst *gi = get_gep(v)) {
     assert(is_const_null_ptr(gi->getOperand(0)) &&
            gi->getNumOperands() == 2 &&
            "only single-index GEP of null is used for i20");
     dest_id = as->nodes->find_value_node(gi);
     op = ii->getOperand(1);
-  } else if (llvm::ConstantExpr *expr = get_const_expr(inst)) {
+  } else if (llvm::ConstantExpr *expr = get_const_expr(v)) {
     assert(!as->nodes->contains_value(expr));
-    u32 node_id = as->nodes->add_value(expr);
+    as->nodes->add_value(expr);
+    
     if (expr->getOpcode() == llvm::Instruction::IntToPtr) {
       op = expr->getOperand(0);
-    } else if (expr->getOperand() == llvm::Instruction::GetElementPtr) {
+    } else if (expr->getOpcode() == llvm::Instruction::GetElementPtr) {
       assert(is_const_null_ptr(expr->getOperand(0)) &&
              expr->getNumOperands() == 2 &&
              "only single-index GEP of null is used for i2p");
@@ -1499,7 +1552,7 @@ static void process_int2ptr(AnalysisSet *as, BlockState *bs,
   for (llvm::DenseSet<llvm::Value *>::iterator it = src.begin(),
          ie= src.end(); it != ie; ++it) {
     llvm::Value *s = *it;
-    u32 sub_node_id = as->nodes->find_value_node_const_ptr(s);
+    u32 sub_node_id = find_value_node_const_ptr(as, s);
     if (sub_node_id)
       as->constraints->add(ConstraintCopy, dest_id, sub_node_id);
   }
@@ -1509,7 +1562,54 @@ static void process_int2ptr(AnalysisSet *as, BlockState *bs,
   }
 }
 
-static void process_gep(AnalysisSet *as, BlockState *bs,
+u32 find_value_node_const_ptr(AnalysisSet *as, llvm::Value *v) {
+  assert(v);
+    
+  u32 node_id = as->nodes->find_value_node(v, true);
+  if (node_id) {
+    return node_id;
+  }
+
+  llvm::Constant *c = llvm::dyn_cast<llvm::Constant>(v);
+  assert(c && llvm::isa<llvm::PointerType>(c->getType()) &&
+         "value without node is not a const pointer");
+  assert(!llvm::isa<llvm::GlobalValue>(c) &&
+         "global const pointer has no node");
+
+  if (llvm::isa<llvm::ConstantPointerNull>(c) ||
+      llvm::isa<llvm::UndefValue>(c)) {
+    return 0;
+  }
+
+  llvm::ConstantExpr *e = llvm::dyn_cast<llvm::ConstantExpr>(c);
+  assert(e && "unknown const pointer type");
+  
+  switch (e->getOpcode()) {
+  case llvm::Instruction::BitCast:
+    return find_value_node_const_ptr(as, e->getOperand(0));
+      
+  case llvm::Instruction::IntToPtr:
+    process_int2ptr(as, e);
+    return as->nodes->find_value_node(e);
+
+  case llvm::Instruction::GetElementPtr:
+    if (is_const_null_ptr(e->getOperand(0))) {
+      if(e->getNumOperands() > 2)
+        return 0;
+
+      process_int2ptr(as, e);
+      return as->nodes->find_value_node(e);
+    }
+    assert(false && "unexpected getelementptr const expression");
+      
+  default:
+    assert(false && "unknown opcode in const pointer expression");
+  }
+
+  return 0;
+}
+
+static void process_gep(AnalysisSet *as,
                         llvm::Instruction *inst) {
 
   assert(inst);
@@ -1520,19 +1620,19 @@ static void process_gep(AnalysisSet *as, BlockState *bs,
   llvm::Value *s = gi->getOperand(0);
   if (llvm::isa<llvm::ConstantPointerNull>(s)) {
     if (gi->getNumOperands() == 2) {
-      process_int2ptr(as, bs, inst);
+      process_int2ptr(as, inst);
     }
     return;
   }
 
-  u32 sub_node_id = as->nodes->find_value_node_const_ptr(s);
+  u32 sub_node_id = find_value_node_const_ptr(as, s);
   assert(sub_node_id && "non-null GEP operand has no node");
 
-  u32 off = gep_off(gi);
+  u32 off = gep_off(as, gi);
   as->constraints->add(ConstraintGEP, node_id, sub_node_id, off);
 }
 
-static void process_bitcast(AnalysisSet *as, BlockState *bs,
+static void process_bitcast(AnalysisSet *as,
                             llvm::Instruction *inst) {
 
   assert(inst);
@@ -1543,12 +1643,12 @@ static void process_bitcast(AnalysisSet *as, BlockState *bs,
   llvm::Value *op = bi->getOperand(0);
   assert(is_pointer(op));
 
-  u32 sub_node_id = as->nodes->find_value_node_const_ptr(op);
+  u32 sub_node_id = find_value_node_const_ptr(as, op);
   if (sub_node_id)
     as->constraints->add(ConstraintCopy, node_id, sub_node_id);
 }
 
-static void process_phi(AnalysisSet *as, BlockState *bs,
+static void process_phi(AnalysisSet *as,
                         llvm::Instruction *inst) {
 
   assert(inst);
@@ -1556,15 +1656,15 @@ static void process_phi(AnalysisSet *as, BlockState *bs,
   llvm::PHINode *pn = llvm::cast<llvm::PHINode>(inst);
   u32 node_id = as->nodes->find_value_node(pn);
 
-  for (int i = 0; i < pn->getNumIncomingValues(); i++) {
+  for (u32 i = 0; i < pn->getNumIncomingValues(); i++) {
     llvm::Value *v = pn->getIncomingValue(i);
-    u32 sub_node_id = as->nodes->find_value_node_const_ptr(v);
+    u32 sub_node_id = find_value_node_const_ptr(as, v);
     if (sub_node_id)
       as->constraints->add(ConstraintCopy, node_id, sub_node_id);
   }
 }
 
-static void process_select(AnalysisSet *as, BlockState *bs,
+static void process_select(AnalysisSet *as,
                            llvm::Instruction *inst) {
 
   assert(inst);
@@ -1573,19 +1673,19 @@ static void process_select(AnalysisSet *as, BlockState *bs,
   u32 node_id = as->nodes->find_value_node(si);
 
   llvm::Value *op1 = si->getOperand(1);
-  u32 sub_node_id1 = as->nodes->find_value_node_const_ptr(op1);
+  u32 sub_node_id1 = find_value_node_const_ptr(as, op1);
 
   if (sub_node_id1)
     as->constraints->add(ConstraintCopy, node_id, sub_node_id1);
   
   llvm::Value *op2 = si->getOperand(2);
-  u32 sub_node_id2 = as->nodes->find_value_node_const_ptr(op2);
+  u32 sub_node_id2 = find_value_node_const_ptr(as, op2);
 
   if (sub_node_id2)
     as->constraints->add(ConstraintCopy, node_id, sub_node_id2);
 }
 
-static void process_vararg(AnalysisSet *as, BlockState *bs,
+static void process_vararg(AnalysisSet *as,
                            llvm::Instruction *inst) {
 
   assert(inst);
@@ -1628,7 +1728,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   llvm::Function *f = calledFunction(ci);
   if (f) {
     // Process non-external calls first.
-    if (!as->structs.ext_info->is_ext(f)) {
+    if (!as->ext_info.is_ext(f)) {
       // Has a call.
       bs->contains_call = true;
       meta->func_callsites[bs->position].push_back(f);
@@ -1637,7 +1737,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
       u32 node_id = constraint_graph->create_node(PNODE);
       meta->callsite_succ[bs->position] = node_id;
 
-      meta->add_edge(bs->position, node_id);
+      constraint_graph->add_edge(bs->position, node_id);
       bs->position = node_id;
 
       return;
@@ -1645,7 +1745,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
 
     // Count how many store constraints were added.
     u32 num_stores = 0;
-    for (u32 i = bs->cons_sz; i < bs->cons_sz; i++) {
+    for (u32 i = bs->constraints_sz; i < bs->constraints_sz; i++) {
       Constraint *c = as->constraints->find(i);
       if (c->type == ConstraintStore) {
         num_stores++;
@@ -1659,16 +1759,14 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
       u32 bottom = constraint_graph->create_node(PNODE);
 
       for (u32 i = 0; i < num_stores * 2; i += 2) {
-        u32 i0 = bs->cons_sz + i;
+        u32 i0 = bs->constraints_sz + i;
         assert(as->constraints->find(i0)->type == ConstraintLoad);
 
-        u32 i1 = bs->cons_sz + i + 1;
+        u32 i1 = bs->constraints_sz + i + 1;
         assert(as->constraints->find(i1)->type == ConstraintStore);
 
         // Create a non-preserving node.
         u32 node_id = constraint_graph->create_node(MNODE);
-        SEGNode *node = constraint_graph->get_node(node_id);
-
         constraint_graph->uses_relevant_def[node_id] = true;
 
         constraint_graph->add_edge(bs->position, node_id);
@@ -1698,7 +1796,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
     }
     
     // Go through the new constraints.
-    for (u32 i = bs->cons_sz; i < as->constraints->size(); i++) {
+    for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
       Constraint *c = as->constraints->find(i);
 
       if (c->type == ConstraintStore) {
@@ -1706,7 +1804,6 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
       }
       
       if (c->type == ConstraintLoad) {
-        SEGNode *node = constraint_graph->get_node(bs->position);
         constraint_graph->uses_relevant_def[bs->position] = true;
         constraint_graph->uses[i] = bs->position;
       }
@@ -1731,7 +1828,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   bs->contains_call = true;
 
   // Go through the new constraints and save them to process later.
-  for (u32 i = bs->cons_sz; i < as->constraints->size(); i++) {
+  for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
     meta->indirect_call_cons.push_back(i);
   }
   
@@ -1739,7 +1836,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   // we can add the interprocedural control-flow edges later,
   // as well as process indirect external calls.
   std::pair<llvm::CallInst *, u32> call_pair =
-    std::make_pair<llvm::CallInst *, u32>(ci, bs->position);
+    std::make_pair(ci, bs->position);
   meta->indirect_call_pairs.push_back(call_pair);
 
   // Ensure the call inst has an associated object node.
@@ -1756,17 +1853,14 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   return;
 }
 
-static void add_load_edge(AnalysisSet *as, BlockState *bs,
-                          llvm::Instruction *inst) {
+static void add_load_edges(AnalysisSet *as, BlockState *bs,
+                           llvm::Instruction *inst) {
 
   ConstraintGraph *constraint_graph = as->cgraph;
-  ConstraintGraphMetadata *meta = as->cgraph->meta;
-  
-  SEGNode *node = constraint_graph->get_node(bs->position);
-  meta->uses_relevant_def[bs->position] = true;
+  constraint_graph->uses_relevant_def[bs->position] = true;
     
-  for (u32 i = bs.cons_sz; i < as->constraints->size(); i++) {
-    Constraint *c = as->constraint->find(i);
+  for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
+    Constraint *c = as->constraints->find(i);
     if (c->type == ConstraintLoad) {
       constraint_graph->uses[i] = bs->position;
       break;
@@ -1774,12 +1868,10 @@ static void add_load_edge(AnalysisSet *as, BlockState *bs,
   }
 }
 
-static void add_store_edge(AnalysisSet *as, BlockState *bs,
-                           llvm::Instruction *inst) {
+static void add_store_edges(AnalysisSet *as, BlockState *bs,
+                            llvm::Instruction *inst) {
 
   ConstraintGraph *constraint_graph = as->cgraph;
-  ConstraintGraphMetadata *meta = as->cgraph->meta;
-
   SEGNode *node = constraint_graph->get_node(bs->position);
   if (node->type == PNODE) {
     node->type = MNODE;
@@ -1791,7 +1883,7 @@ static void add_store_edge(AnalysisSet *as, BlockState *bs,
 
   // There may have been multiple constraints added, but there
   // will be exactly one store constraint
-  for (u32 i = bs->cons_sz; i < as->constraints->size(); i++) {
+  for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
     Constraint *c = as->constraints->find(i);
     if (c->type == ConstraintStore) {
       constraint_graph->defs[i] = bs->position;
@@ -1800,12 +1892,17 @@ static void add_store_edge(AnalysisSet *as, BlockState *bs,
   }  
 }
 
+enum InstType {
+  INST_NONE = 0,
+  INST_LOAD,
+  INST_STORE,
+  INST_CALL,
+};
+
 static void init_instruction(AnalysisSet *as, BlockState *bs,
                              llvm::Instruction *inst) {
 
-  ConstraintGraph *constraint_graph = as->cgraph;
-  
-  unsigned opcode = inst->getOpcode();
+  ConstraintGraph *constraint_graph = as->cgraph;  
   bool ptr = is_pointer(inst->getType());
 
   bs->constraints_sz = as->constraints->size();
@@ -1815,20 +1912,20 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
   case llvm::Instruction::Load:
     if (ptr) {
       type = INST_LOAD;
-      process_load(as, bs, inst);
+      process_load(as, inst);
     }
     break;
     
   case llvm::Instruction::Store:
     assert(!ptr);
     type = INST_STORE;
-    process_store(as, bs, inst);
+    process_store(as, inst);
     break;
     
   case llvm::Instruction::Invoke:
   case llvm::Instruction::Call:
     type = INST_CALL;
-    process_call(as, bs, inst);
+    process_call(as, inst);
     break;
     
   case llvm::Instruction::Ret:
@@ -1836,43 +1933,42 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
     process_return(as, bs, inst);
     break;
     
-  case llvm::Instruction::Malloc:
   case llvm::Instruction::Alloca:
     assert(ptr);
-    process_alloc(as, bs, inst);
+    process_alloc(as, inst);
     break;
 
   case llvm::Instruction::GetElementPtr:
     assert(ptr);
-    process_gep(as, bs, inst);
+    process_gep(as, inst);
     break;
       
   case llvm::Instruction::IntToPtr:
     assert(ptr);
-    process_int2ptr(as, bs, inst);
+    process_int2ptr(as, inst);
     break;
     
   case llvm::Instruction::BitCast:
     if (ptr) {
-      process_bitcast(as, bs, inst);
+      process_bitcast(as, inst);
     }
     break;
       
   case llvm::Instruction::PHI:
     if (ptr) {
-      process_phi(as, bs, inst);
+      process_phi(as, inst);
     }
     break;
       
   case llvm::Instruction::Select:
     if (ptr) {
-      process_select(as, bs, inst);
+      process_select(as, inst);
     }
     break;
       
   case llvm::Instruction::VAArg:
     if (ptr) {
-      process_vararg(as, bs, inst);
+      process_vararg(as, inst);
     }
     break;
   }
@@ -1885,15 +1981,15 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
   constraint_graph->uses.insert(constraint_graph->uses.end(), diff, 0);  
   
   switch (type) {
-  case CALL:
+  case INST_CALL:
     add_call_edges(as, bs, inst);
     break;
 
-  case LOAD:
+  case INST_LOAD:
     add_load_edges(as, bs, inst);
     break;
     
-  case STORE:
+  case INST_STORE:
     add_store_edges(as, bs, inst);
     break;
     
@@ -1906,8 +2002,11 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
   assert(constraint_graph->uses.size() == sz);
 }
 
-static void init_blocks(AnalysisSet *as, llvm::BasicBlock *bb, u32 parent) {
-  ConstraintGraph *constraint_graph;
+static void init_blocks(AnalysisSet *as,
+                        llvm::BasicBlock *bb,
+                        u32 parent) {
+  
+  ConstraintGraph *constraint_graph = as->cgraph;
   ConstraintGraphMetadata *meta = as->cgraph->meta;
 
   // Process blocks we've seen before.
@@ -1932,14 +2031,14 @@ static void init_blocks(AnalysisSet *as, llvm::BasicBlock *bb, u32 parent) {
   }
 
   BlockState bs(bb, index);
-  for (llvm::BasicBlock::iterator i = bb->begin(), i = bb->end();
+  for (llvm::BasicBlock::iterator i = bb->begin(), e = bb->end();
        i != e; i++) {
     llvm::Instruction *inst = &*i;
     init_instruction(as, &bs, inst);
   }
 
-  for (llvm::succ_iterator i = llvm::succ_begin(bb), i = llvm::succ_end(bb);
-       i != e; i++) {
+  for (llvm::succ_iterator i = llvm::succ_begin(bb),
+         e = llvm::succ_end(bb); i != e; i++) {
     init_blocks(as, *i, bs.position);
   }   
 }
@@ -1951,7 +2050,7 @@ static void init_function_contents(llvm::Module *m, AnalysisSet *as) {
   for (llvm::Module::iterator i = m->begin(), e = m->end();
        i != e; i++) {
     llvm::Function *f = i;
-    init_pointer_instruction_nodes(f);
+    init_pointer_instruction_nodes(as, f);
 
     init_blocks(as, &f->getEntryBlock(), MAX_U32);
   }

@@ -18,6 +18,7 @@
 #include "llvm/Module.h"       // for llvm::Function
 
 #include <set> // for std::set
+#include <string>
 
 class AnalysisSet {
  public:
@@ -40,7 +41,7 @@ class AnalysisSet {
   // =======================================================
   Structs structs;
   llvm::DenseSet<llvm::Value *> addr_taken_args;
-  std::map<string, u32> static_returns;
+  std::map<std::string, u32> static_returns;
   
   // External stubs that makes the analysis more meaningful
   // =======================================================
@@ -49,8 +50,6 @@ class AnalysisSet {
   // Insert all of the nodes you ever need to insert from the
   // module.
   AnalysisSet(llvm::Module *m) {
-    u32 max_size = 1000000000;
-    cgraph = ConstraintGraph(max_size);
     init(m);
   }
 

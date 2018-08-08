@@ -246,8 +246,8 @@ class ConstraintGraph : public SEG {
   ConstraintGraphMetadata *meta;
 
    ConstraintGraph(u32 size, u32 max_size) : SEG(max_size) {
-    defs.assign(size);
-    uses.assign(size);
+    defs.assign(size, 0);
+    uses.assign(size, 0);
     meta = new ConstraintGraphMetadata();
   }
 };
