@@ -97,6 +97,10 @@ class Structs {
     max_struct(llvm::Type::getInt8Ty(llvm::getGlobalContext())),
     max_struct_sz(0) {}
 
+  u32 size() {
+    return struct_info_map.size();
+  }
+
   // Returns the number of embedded fields for each field in st.
   const std::vector<u32> get_sz(const llvm::StructType *st){
     return get_info(st).num_embedded_fields;

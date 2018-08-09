@@ -14,8 +14,11 @@
 
 #include "llvm/ADT/DenseMap.h"        // for llvm::DenseMap
 #include "llvm/ADT/DenseSet.h"        // for llvm::DenseSet
+#include "llvm/Instructions.h"        // for llvm::CallInst
+#include "llvm/Module.h"              // for llvm::BasicBlock
 #include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
 
+#include <map>    // for std::map
 #include <set>    // for std::set
 #include <vector> // for std::vector
 

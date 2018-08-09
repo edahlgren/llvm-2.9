@@ -137,6 +137,10 @@ public:
   
   Nodes() {}
 
+  u32 size() {
+    return nodes.size();
+  }
+
   u32 rep(u32 i) {
     u32 &r0= nodes[i]->rep;
     if(r0 >= NODE_RANK_MIN) {

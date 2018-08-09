@@ -10,6 +10,8 @@
 #define SEG_H
 
 #include "int.h"     // for u32
+
+#include <cassert>   // for assert
 #include <vector>    // for std::vector
 #include <algorithm> // for std::find
 

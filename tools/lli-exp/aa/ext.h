@@ -185,29 +185,27 @@ class ExtInfo {
   }
 
   bool has_static(const llvm::Function *f) const {
-    // TODO: implement
-    return false;
+    ExternalFunctionType t = get_type(f);
+    return t == EFT_STAT || t == EFT_STAT2;
   }
   
   bool has_static2(const llvm::Function *f) const {
-    // TODO: implement
-    return false;
+    return get_type(f) == EFT_STAT2;
   }
 
   bool is_alloc(const llvm::Function *f) const {
-    // TODO: implement
-    return false;
+    ExternalFunctionType t = get_type(f);
+    return t == EFT_ALLOC || t == EFT_NOSTRUCT_ALLOC;
   }
 
   bool no_struct_alloc(const llvm::Function *f) const {
-    // TODO: implement
-    return false;
+    return get_type(f) == EFT_NOSTRUCT_ALLOC;
   }
 
   bool is_noop(const llvm::Function *f) const {
-    // TODO: implement
-    return false;
+    return get_type(f) == EFT_NOOP;
   }
+
   bool is_ext(const llvm::Function *f) {
     //Check the cache first; everything below is slower.
     std::unordered_map<const llvm::Function *, bool>::iterator i =
@@ -218,7 +216,7 @@ class ExtInfo {
     }
   
     bool res;
-    if(f->isDeclaration() || f->isIntrinsic()) {
+    if (f->isDeclaration() || f->isIntrinsic()) {
       res = true;
     } else {
       ExternalFunctionType t = get_type(f);
