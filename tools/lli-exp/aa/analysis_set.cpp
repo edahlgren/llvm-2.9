@@ -671,6 +671,7 @@ void AnalysisSet::init(llvm::Module *m) {
   nodes->print();
   print_named_constraints(this);
   structs.print();
+  cgraph->print();
   os << "===========================================================" << "\n";
   os << "Stats" << "\n";
   os << "----------------" << "\n";

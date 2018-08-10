@@ -107,7 +107,7 @@ static void process_load(AnalysisSet *as,
   llvm::LoadInst *li = llvm::cast<llvm::LoadInst>(inst);
 
   u32 node_id = as->nodes->find_value_node(li);
-  u32 sub_node_id = find_value_node_const_ptr(as, li->getOperand(0));
+  u32 sub_node_id = find_value_node_const_ptr(as, li->getPointerOperand());
   if (!sub_node_id) {
     return;
   }
@@ -133,11 +133,11 @@ static void process_store(AnalysisSet *as,
   assert(inst);
   llvm::StoreInst *si = llvm::cast<llvm::StoreInst>(inst);
 
-  llvm::Value *src = si->getOperand(0);
+  llvm::Value *src = si->getValueOperand();
   llvm::outs() << "      src is_pointer: " << is_pointer(src)
                << " is_const: " << is_const(src) << "\n";
 
-  llvm::Value *dest = si->getOperand(1);
+  llvm::Value *dest = si->getPointerOperand();
   llvm::outs() << "      dest is_pointer: " << is_pointer(dest)
                << " is_const: " << is_const(dest) << "\n";
   
@@ -550,34 +550,42 @@ static void process_external_call(AnalysisSet *as,
   case EFT_L_A1:
   case EFT_L_A2:
   case EFT_L_A8:
+    llvm::outs() << "process_EFT_L_A: " << f->getName() << "\n";
     process_EFT_L_A(as, cs, f);
     break;
     
   case EFT_L_A0__A0R_A1R:
+    llvm::outs() << "process_EFT_L_A0__A0R_A1R: " << f->getName() << "\n";
     process_EFT_L_A0__A0R_A1R(as, cs, f);
     break;
 
   case EFT_A1R_A0R:
+    llvm::outs() << "process_EFT_A1R_A0R: " << f->getName() << "\n";
     process_EFT_A1R_A0R(as, cs, f);
     break;
     
   case EFT_A3R_A1R_NS:
+    llvm::outs() << "process_EFT_A3R_A1R_NS: " << f->getName() << "\n";
     process_EFT_A3R_A1R_NS(as, cs, f);
     break;
 
   case EFT_A1R_A0:
+    llvm::outs() << "process_EFT_A1R_A0: " << f->getName() << "\n";
     process_EFT_A1R_A0(as, cs, f);
     break;
 
   case EFT_A2R_A1:
+    llvm::outs() << "process_EFT_A2R_A1: " << f->getName() << "\n";
     process_EFT_A2R_A1(as, cs, f);
     break;
 
   case EFT_A4R_A1:
+    llvm::outs() << "process_EFT_A4R_A1: " << f->getName() << "\n";
     process_EFT_A4R_A1(as, cs, f);
     break;
 
   case EFT_L_A0__A2R_A0:
+    llvm::outs() << "process_EFT_A0__A2R_A0: " << f->getName() << "\n";
     process_EFT_L_A0__A2R_A0(as, cs, f);
     break;
 
@@ -586,6 +594,7 @@ static void process_external_call(AnalysisSet *as,
   case EFT_A2R_NEW:
   case EFT_A4R_NEW:
   case EFT_A11R_NEW:
+    llvm::outs() << "process_EFT_A_NEW: " << f->getName() << "\n";
     process_EFT_A_NEW(as, cs, f);
     break;
 
@@ -598,6 +607,7 @@ static void process_external_call(AnalysisSet *as,
     
   case EFT_NOOP:
   case EFT_OTHER:
+    llvm::outs() << "EFT skipped: " << f->getName() << "\n";
     break;
 
   default:
@@ -762,19 +772,15 @@ static void process_return(AnalysisSet *as, BlockState *bs,
   assert(inst);
   llvm::ReturnInst *ri = llvm::cast<llvm::ReturnInst>(inst);
 
-  if (!ri->getNumOperands())
-    return;
-
-  llvm::Value *src = ri->getOperand(0);
-  if (!is_pointer(src))
+  llvm::Value *ret_value = ri->getReturnValue();
+  if (!ret_value || !is_pointer(ret_value))
     return;
 
   llvm::Function *f = ri->getParent()->getParent();
-
-  u32 ret_node_id = as->nodes->find_ret_node(f),
-    src_node_id = find_value_node_const_ptr(as, src);
-
+  u32 ret_node_id = as->nodes->find_ret_node(f);
   assert(ret_node_id);
+
+  u32 src_node_id = find_value_node_const_ptr(as, ret_value);
   if (src_node_id)
     as->constraints->add(ConstraintCopy, ret_node_id, src_node_id);
 
@@ -815,9 +821,10 @@ static void process_alloc(AnalysisSet *as,
       if (obj_id != NodeNone)
         obj_id = _obj_id;
     }
-  } else {
-    obj_id = as->nodes->add_object(inst, 1, weak);
   }
+
+  if (obj_id == NodeNone)
+    obj_id = as->nodes->add_object(inst, 1, weak);
 
   as->constraints->add(ConstraintAddrOf, node_id, obj_id);
 }
@@ -1136,7 +1143,7 @@ static void process_gep(AnalysisSet *as,
   llvm::GetElementPtrInst *gi = llvm::cast<llvm::GetElementPtrInst>(inst);
   u32 node_id = as->nodes->find_value_node(gi);
 
-  llvm::Value *s = gi->getOperand(0);
+  llvm::Value *s = gi->getPointerOperand();  
   if (llvm::isa<llvm::ConstantPointerNull>(s)) {
     if (gi->getNumOperands() == 2) {
       process_int2ptr(as, inst);
@@ -1159,10 +1166,10 @@ static void process_bitcast(AnalysisSet *as,
   llvm::BitCastInst *bi = llvm::cast<llvm::BitCastInst>(inst);
   u32 node_id = as->nodes->find_value_node(bi);
 
-  llvm::Value *op = bi->getOperand(0);
-  assert(is_pointer(op));
+  llvm::Value *src = bi->getOperand(0);
+  assert(is_pointer(src));
 
-  u32 sub_node_id = find_value_node_const_ptr(as, op);
+  u32 sub_node_id = find_value_node_const_ptr(as, src);
   if (sub_node_id)
     as->constraints->add(ConstraintCopy, node_id, sub_node_id);
 }
@@ -1247,7 +1254,7 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   llvm::Function *f = calledFunction(ci);
   if (f) {
     // Process non-external calls first.
-    if (!as->ext_info.is_ext(f)) {
+    if (!f->isDeclaration() && !as->ext_info.is_ext(f)) {
       // Has a call.
       bs->contains_call = true;
       meta->func_callsites[bs->position].push_back(f);
@@ -1494,13 +1501,7 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
     type = INST_STORE;
     process_store(as, inst);
     break;
-    
-  case llvm::Instruction::Invoke:
-  case llvm::Instruction::Call:
-    type = INST_CALL;
-    process_call(as, inst);
-    break;
-    
+        
   case llvm::Instruction::Ret:
     assert(!ptr);
     process_return(as, bs, inst);
@@ -1545,6 +1546,12 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
     }
     break;
     
+  case llvm::Instruction::Invoke:
+  case llvm::Instruction::Call:
+    type = INST_CALL;
+    process_call(as, inst);
+    break;
+    
   default:
     assert(!ptr && "unknown instruction is a pointer");
   }
@@ -1557,10 +1564,6 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
   constraint_graph->uses.insert(constraint_graph->uses.end(), diff, 0);  
   
   switch (type) {
-  case INST_CALL:
-    add_call_edges(as, bs, inst);
-    break;
-
   case INST_LOAD:
     add_load_edges(as, bs, inst);
     break;
@@ -1569,6 +1572,10 @@ static void init_instruction(AnalysisSet *as, BlockState *bs,
     add_store_edges(as, bs, inst);
     break;
     
+  case INST_CALL:
+    add_call_edges(as, bs, inst);
+    break;
+
   default:
     // Skip INST_NONE
     break;
@@ -1590,7 +1597,9 @@ static void init_blocks(AnalysisSet *as,
   // Deal with processed blocks.
   if (u32 index = block_cache->lookup(bb)) {
     assert(parent != MAX_U32);
-    // Just connect the parent block to the processed block.
+    // Just connect the parent block to the processed block,
+    // this is likely a new parent. If it's not, add_edge
+    // won't count it twice.
     constraint_graph->add_edge(parent, index);
     return;
   }
@@ -1600,7 +1609,7 @@ static void init_blocks(AnalysisSet *as,
   block_cache->insert(bb, index);
 
   if (parent == MAX_U32) {
-    // Handle the top-level block.
+    // Handle the entry block.
     llvm::Function *f = bb->getParent();
     assert(!meta->func_start_nodes.count(f));
     meta->func_start_nodes[f] = index;
@@ -1622,14 +1631,17 @@ static void init_blocks(AnalysisSet *as,
 
   for (llvm::succ_iterator i = llvm::succ_begin(bb),
          e = llvm::succ_end(bb); i != e; i++) {
-    // Recurse to process succeeding blocks.
-    init_blocks(as, block_cache, *i, bs.position);
+    // Recurse to process succeeding blocks, using index
+    // as the next parent.
+    init_blocks(as, block_cache, *i, index);
   }   
 }
 
 static void init_function_blocks(AnalysisSet *as,
                                  BlockSet *block_cache,
                                  llvm::Function *f) {
+
+  assert(!f->isDeclaration());
 
   llvm::outs() << "** Processing function "
                << f->getName() << " **\n";
@@ -1638,6 +1650,10 @@ static void init_function_blocks(AnalysisSet *as,
          ei = llvm::inst_end(f); ii != ei; ii++) {
     llvm::Instruction *inst = &*ii;
     if (is_pointer(inst)) {
+      llvm::outs() << "ADDING POINTER INST: " << inst_str(inst) << "\n";
+      llvm::WriteAsOperand(llvm::outs(), inst, false);
+      llvm::outs() << "\n";
+      
       // Add a node for each pointer instruction.
       as->nodes->add_value(inst);
     }

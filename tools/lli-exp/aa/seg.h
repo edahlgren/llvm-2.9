@@ -11,6 +11,8 @@
 
 #include "int.h"     // for u32
 
+#include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
+
 #include <cassert>   // for assert
 #include <vector>    // for std::vector
 #include <algorithm> // for std::find
@@ -32,6 +34,9 @@ public:
   }
 
   void insert(u32 i) {
+    if (contains(i))
+      return;
+    
     set.push_back(i);
   }
 
@@ -90,6 +95,59 @@ public:
   bool is_rep() { return rep == MAX_U32; }
 
   bool unreachable() { return rep == 0; }
+
+  std::string to_string(int l = 0) {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+
+    os.indent(l) << "type: ";
+    if (type == PNODE) {
+      os << "PNODE";
+    } else if (type == MNODE) {
+      os << "MNODE";
+    } else {
+      assert(false && "unknown node type");
+    }
+    os.indent(l) << "\n";
+
+    os.indent(l) << "dfs_num: " << dfs_num << "\n";
+    os.indent(l) << "del: " << del << "\n";
+
+    if (is_rep()) {
+      os.indent(l) << "rep: self" << "\n";
+    } else {
+      os.indent(l) << "rep: " << rep << "\n";
+    }
+    os.indent(l) << "rank: " << rank() << "\n";
+
+    os.indent(l) << "unreachable: " << unreachable() << "\n";
+
+    if (pred.size() == 0) {
+      os.indent(l) << "predecessors {}" << "\n";
+    } else {
+      os.indent(l) << "predecessors {" << "\n";
+      for (SEGIndexSet::iterator i = pred.begin(),
+             e = pred.end(); i != e; i++) {
+        u32 index = *i;
+        os.indent(l + 1) << index << "," << "\n";
+      }
+      os.indent(l) << "}" << "\n";
+    }
+
+    if (succ.size() == 0) {
+      os.indent(l) << "successors {}" << "\n";
+    } else {
+      os.indent(l) << "successors {" << "\n";
+      for (SEGIndexSet::iterator i = succ.begin(),
+             e = succ.end(); i != e; i++) {
+        u32 index = *i;
+        os.indent(l + 1) << index << "," << "\n";
+      }
+      os.indent(l) << "}";
+    }
+    
+    return os.str();
+  }
 };
 
 class SEG {
@@ -191,6 +249,25 @@ public:
       node->rep = MAX_U32;
       node->succ.clear();
     }    
+  }
+
+  void print(llvm::raw_ostream &os, int l = 0) {
+    os << "SEG {" << "\n";
+    os.indent(l + 1) << "start: " << start << "\n";
+    os.indent(l + 1) << "max_size: " << max_size << "\n";
+    os.indent(l + 1) << "nodes {" << "\n";
+    for (u32 i = 0; i < nodes.size(); i++) {
+      SEGNode *node = nodes[i];
+      os.indent(l + 2) << i << " {" << "\n";
+      os << node->to_string(l + 3) << "\n";
+      os.indent(l + 2) << "}" << "\n";
+    }
+    os.indent(l + 1) << "}" << "\n";
+    os << "}" << "\n";
+  }
+  
+  void print(int indent_level = 0) {
+    print(llvm::outs(), indent_level);
   }
 
   //void print(std::ostream &os);
