@@ -568,9 +568,27 @@ static void init_global_variable_values(llvm::Module *m, AnalysisSet *as) {
   }  
 }
 
+static void init_function_internals(llvm::Module *m, AnalysisSet *as) {
+  FunctionStates states = get_function_states(m, as); 
+
+  for (FunctionStates::iterator i = states.begin(), e = states.end();
+       i != e; i++) {
+    
+    Nodes *func_nodes = i->acquire_nodes();
+    as->nodes->extend(func_nodes);
+
+    Constraints *func_cons = i->acquire_constraints();
+    as->constraints->extend(func_cons);
+
+    ConstraintGraph *func_cons_graph = i->acquire_constraint_graph();
+    as->cgraph->extend(func_cons_graph);
+  }
+}
+
 void AnalysisSet::init(llvm::Module *m) {
   nodes = new Nodes();
   constraints = new Constraints();
+  cgraph = new ConstraintGraph();
   
   // Create 3 placeholder nodes for each of the SpecialNodes,
   // excluding the NodeFirst. These are used to describe exceptional
@@ -661,9 +679,6 @@ void AnalysisSet::init(llvm::Module *m) {
   //print_named_constraints(this);
   //structs.print();
 
-  // Process the blocks inside each function.
-  cgraph = new ConstraintGraph(constraints->size(),
-                               1000000000);
   init_function_internals(m, this);
 
   llvm::raw_ostream &os = llvm::outs();

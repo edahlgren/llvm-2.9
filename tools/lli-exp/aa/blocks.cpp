@@ -23,41 +23,6 @@
 
 #include <map>    // for std::map
 
-class BlockState {
-public:
-  llvm::BasicBlock *block;
-  u32 position;
-  bool contains_call;
-  u32 constraints_sz;
-
-  BlockState(llvm::BasicBlock *bb, u32 position) :
-    block(bb),
-    position(position),
-    contains_call(false),
-    constraints_sz(0) {}
-};
-
-// Cache of blocks and the SEGNode index that they're
-// associated with.
-class BlockSet {
-public:
-  std::map<llvm::BasicBlock *, u32> cache;
-  
-  u32 lookup(llvm::BasicBlock *block) {
-    std::map<llvm::BasicBlock *, u32>::iterator it =
-      cache.find(block);
-    if (it != cache.end()) {
-      assert(it->second);
-      return it->second;
-    }
-    return 0;
-  }
-
-  void insert(llvm::BasicBlock *block, u32 index) {
-    cache[block] = index;
-  }
-};
-
 static bool is_gep(llvm::ConstantExpr *expr) {
   return expr && expr->getOpcode() == llvm::Instruction::GetElementPtr;
 }
@@ -637,9 +602,8 @@ static void process_direct_call(AnalysisSet *as,
   llvm::Function::arg_iterator func_it= f->arg_begin(),
     func_end= f->arg_end();
   
-  for(; func_it != func_end; ++arg_it, ++func_it) {
-    if (arg_it == arg_end)
-      break;
+  for(; func_it != func_end && arg_it != arg_end;
+      ++arg_it, ++func_it) {
 
     llvm::Value *aa = *arg_it, *fa = func_it;
     if (!is_pointer(fa->getType()))
@@ -658,21 +622,22 @@ static void process_direct_call(AnalysisSet *as,
 
   if (!f->isVarArg()) {
     assert(arg_it == arg_end && "too many args to non-vararg func");
-  } else {
-    u32 va_node_id = as->nodes->find_vararg_node(f);
-    assert(va_node_id);
+    return;
+  }
 
-    for (; arg_it != arg_end; arg_it++) {
-      llvm::Value *aa = *arg_it;
+  u32 va_node_id = as->nodes->find_vararg_node(f);
+  assert(va_node_id);
 
-      if (!is_pointer(aa)) {
-        as->constraints->add(ConstraintAddrOf, va_node_id,
-                             NodeUnknownTarget);
-      } else {
-        u32 aa_node_id = find_value_node_const_ptr(as, aa);
-        if (aa_node_id)
-          as->constraints->add(ConstraintCopy, va_node_id, aa_node_id);
-      }
+  for (; arg_it != arg_end; arg_it++) {
+    llvm::Value *aa = *arg_it;
+
+    if (!is_pointer(aa)) {
+      as->constraints->add(ConstraintAddrOf, va_node_id,
+                           NodeUnknownTarget);
+    } else {
+      u32 aa_node_id = find_value_node_const_ptr(as, aa);
+      if (aa_node_id)
+        as->constraints->add(ConstraintCopy, va_node_id, aa_node_id);
     }
   }
 }
@@ -730,22 +695,34 @@ static void process_indirect_call(AnalysisSet *as,
   }  
 }
 
+static llvm::Function* calledFunction(llvm::CallSite &cs) {
+  llvm::Value *callee = cs.getCalledValue();
+  llvm::Function *f = llvm::dyn_cast<llvm::Function>(callee);
+  if (f)
+    return f;
+
+  if (llvm::ConstantExpr *c = get_const_expr(callee)) {
+    if (c->getOpcode() == llvm::Instruction::BitCast) {
+      if (llvm::Function *f = llvm::dyn_cast<llvm::Function>(c->getOperand(0))) {
+        return f;
+      }
+    }
+  }
+
+  return 0;
+}
+
 static void process_call(AnalysisSet *as,
                          llvm::Instruction *inst) {
+
   assert(inst);
   llvm::CallSite cs(inst);
 
   llvm::Value *callee = cs.getCalledValue();
   llvm::outs() << "      callee: ";
   llvm::WriteAsOperand(llvm::outs(), callee, false);
-  
-  llvm::Function *f = llvm::dyn_cast<llvm::Function>(callee);
-  if (!f) {
-    llvm::ConstantExpr *e = llvm::dyn_cast<llvm::ConstantExpr>(callee);
-    if (e && e->getOpcode() == llvm::Instruction::BitCast) {
-      f = llvm::dyn_cast<llvm::Function>(e->getOperand(0));
-    }
-  }
+
+  llvm::Function *f = calledFunction(cs);
 
   u32 node_id = as->nodes->find_value_node(inst, true);
   if (node_id) {
@@ -753,17 +730,17 @@ static void process_call(AnalysisSet *as,
   }
 
   if (f) {
-    if (f->isDeclaration() && as->ext_info.is_ext(f)) {
-      llvm::outs() << " external" << "\n";
-      process_external_call(as, cs, f);
-    } else {
+    if (!f->isDeclaration()) {
       llvm::outs() << " direct" << "\n";
-      process_direct_call(as, cs, f);
+      return process_direct_call(as, cs, f);
     }
-  } else {
-    llvm::outs() << " indirect" << "\n";
-    process_indirect_call(as, cs, f);
+
+    llvm::outs() << " external" << "\n";
+    return process_external_call(as, cs, f);
   }
+
+  llvm::outs() << " indirect" << "\n";
+  process_indirect_call(as, cs, f);
 }
 
 static void process_return(AnalysisSet *as, BlockState *bs,
@@ -787,6 +764,7 @@ static void process_return(AnalysisSet *as, BlockState *bs,
   if (bs->contains_call) {
     u32 node_id = as->cgraph->create_node(PNODE);
     as->cgraph->add_edge(bs->position, node_id);
+    bs->position = node_id;
   }
 
   ConstraintGraphMetadata *meta = as->cgraph->meta;  
@@ -1226,126 +1204,113 @@ static void process_vararg(AnalysisSet *as,
   as->constraints->add(ConstraintCopy, node_id, vararg_id);
 }
 
-static llvm::Function* calledFunction(llvm::CallInst *ci) {
-  if (llvm::Function *f = ci->getCalledFunction()) {
-    return f;
-  }
-
-  llvm::Value *v = ci->getCalledValue();
-  if (llvm::ConstantExpr *c = get_const_expr(v)) {
-    if (c->getOpcode() == llvm::Instruction::BitCast) {
-      if (llvm::Function *f = llvm::dyn_cast<llvm::Function>(c->getOperand(0))) {
-        return f;
-      }
-    }
-  }
-
-  return 0;
-}
-
-static void add_call_edges(AnalysisSet *as, BlockState *bs,
-                           llvm::Instruction *inst) {
+void add_direct_call_edges(AnalysisSet *as, BlockState *bs,
+                           llvm::Instruction *inst,
+                           llvm::Function *callee) {
 
   ConstraintGraph *constraint_graph = as->cgraph;
   ConstraintGraphMetadata *meta = as->cgraph->meta;
-  llvm::CallInst *ci = llvm::cast<llvm::CallInst>(inst);
-  
-  // Handle direct calls.
-  llvm::Function *f = calledFunction(ci);
-  if (f) {
-    // Process non-external calls first.
-    if (!f->isDeclaration() && !as->ext_info.is_ext(f)) {
-      // Has a call.
-      bs->contains_call = true;
-      meta->func_callsites[bs->position].push_back(f);
 
-      assert(!meta->callsite_succ.count(bs->position));
-      u32 node_id = constraint_graph->create_node(PNODE);
-      meta->callsite_succ[bs->position] = node_id;
+  // Has a call.
+  bs->contains_call = true;
+  meta->func_callsites[bs->position].push_back(callee);
 
-      constraint_graph->add_edge(bs->position, node_id);
-      bs->position = node_id;
+  assert(!meta->callsite_succ.count(bs->position));
+  u32 node_id = constraint_graph->create_node(PNODE);
+  meta->callsite_succ[bs->position] = node_id;
 
-      return;
+  constraint_graph->add_edge(bs->position, node_id);
+  bs->position = node_id;
+}
+
+void add_external_call_edges(AnalysisSet *as, BlockState *bs,
+                           llvm::Instruction *inst) {
+                             
+  ConstraintGraph *constraint_graph = as->cgraph;
+
+  // Count how many store constraints were added.
+  u32 num_stores = 0;
+  for (u32 i = bs->constraints_sz; i < bs->constraints_sz; i++) {
+    Constraint *c = as->constraints->find(i);
+    if (c->type == ConstraintStore) {
+      num_stores++;
     }
+  }
 
-    // Count how many store constraints were added.
-    u32 num_stores = 0;
-    for (u32 i = bs->constraints_sz; i < bs->constraints_sz; i++) {
-      Constraint *c = as->constraints->find(i);
-      if (c->type == ConstraintStore) {
-        num_stores++;
-      }
-    }
-
-    // Process multiple stores. This can be caused by memcpy/memmove.
-    // Create a diamond-shape.
-    if (num_stores > 1) {
-      // Bottom of the diamond.
-      u32 bottom = constraint_graph->create_node(PNODE);
-
-      for (u32 i = 0; i < num_stores * 2; i += 2) {
-        u32 i0 = bs->constraints_sz + i;
-        assert(as->constraints->find(i0)->type == ConstraintLoad);
-
-        u32 i1 = bs->constraints_sz + i + 1;
-        assert(as->constraints->find(i1)->type == ConstraintStore);
-
-        // Create a non-preserving node.
-        u32 node_id = constraint_graph->create_node(MNODE);
-        constraint_graph->uses_relevant_def[node_id] = true;
-
-        constraint_graph->add_edge(bs->position, node_id);
-        constraint_graph->add_edge(node_id, bottom);
-
-        constraint_graph->uses[i0] = node_id;
-        constraint_graph->defs[i1] = node_id;
-      }
-
-      bs->position = bottom;
-      return;
-    }
-
-    // Process single stores.
-    if (num_stores == 1) {
-      SEGNode *node = constraint_graph->get_node(bs->position);
-      if (node->type == PNODE) {
-        // If there's a store, it can longer preserve state.
-        node->type = MNODE;
-      } else {
-        // If it's already non-preserving, add a new mnode
-        // and connect it to the graph.
-        u32 node_id = constraint_graph->create_node(MNODE);
-        constraint_graph->add_edge(bs->position, node_id);
-        bs->position = node_id;
-      }
-    }
+  // Process multiple stores. This can be caused by memcpy/memmove.
+  // Create a diamond-shape.
+  if (num_stores > 1) {
+    // Bottom of the diamond.
+    u32 bottom = constraint_graph->create_node(PNODE);
     
-    // Go through the new constraints.
-    for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
-      Constraint *c = as->constraints->find(i);
-
-      if (c->type == ConstraintStore) {
-        constraint_graph->defs[i] = bs->position;
-      }
+    for (u32 i = 0; i < num_stores * 2; i += 2) {
+      u32 i0 = bs->constraints_sz + i;
+      assert(as->constraints->find(i0)->type == ConstraintLoad);
       
-      if (c->type == ConstraintLoad) {
-        constraint_graph->uses_relevant_def[bs->position] = true;
-        constraint_graph->uses[i] = bs->position;
-      }
+      u32 i1 = bs->constraints_sz + i + 1;
+      assert(as->constraints->find(i1)->type == ConstraintStore);
+      
+      // Create a non-preserving node.
+      u32 node_id = constraint_graph->create_node(MNODE);
+      constraint_graph->uses_relevant_def[node_id] = true;
+      
+      constraint_graph->add_edge(bs->position, node_id);
+      constraint_graph->add_edge(node_id, bottom);
+      
+      constraint_graph->uses[i0] = node_id;
+      constraint_graph->defs[i1] = node_id;
     }
 
+    bs->position = bottom;
     return;
   }
 
+  // Process single stores.
+  if (num_stores == 1) {
+    SEGNode *node = constraint_graph->get_node(bs->position);
+    if (node->type == PNODE) {
+      // If there's a store, it can longer preserve state.
+      node->type = MNODE;
+    } else {
+      // If it's already non-preserving, add a new mnode
+      // and connect it to the graph.
+      u32 node_id = constraint_graph->create_node(MNODE);
+      constraint_graph->add_edge(bs->position, node_id);
+      bs->position = node_id;
+    }
+  }
+    
+  // Go through the new constraints.
+  for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
+    Constraint *c = as->constraints->find(i);
+    
+    if (c->type == ConstraintStore) {
+      constraint_graph->defs[i] = bs->position;
+    }
+    
+    if (c->type == ConstraintLoad) {
+      constraint_graph->uses_relevant_def[bs->position] = true;
+      constraint_graph->uses[i] = bs->position;
+    }
+  }
+}
+
+void add_indirect_call_edges(AnalysisSet *as, BlockState *bs,
+                           llvm::Instruction *inst) {
+
+  llvm::CallSite cs(inst);  
+
+  ConstraintGraph *constraint_graph = as->cgraph;
+  ConstraintGraphMetadata *meta = as->cgraph->meta;
+
   // Handle indirect calls.
-  if (llvm::isa<llvm::InlineAsm>(ci->getCalledValue())) {
+  if (llvm::isa<llvm::InlineAsm>(cs.getCalledValue())) {
     // Skip inline assembly.
     return;
   }
 
   // Is there no value at the called value?
-  u32 fp = as->nodes->find_value_node(ci->getCalledValue(), true);
+  u32 fp = as->nodes->find_value_node(cs.getCalledValue(), true);
   if (!fp) {
     return;
   }
@@ -1361,13 +1326,13 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   // Also save the indirect call inst and current node so
   // we can add the interprocedural control-flow edges later,
   // as well as process indirect external calls.
-  std::pair<llvm::CallInst *, u32> call_pair =
-    std::make_pair(ci, bs->position);
+  std::pair<llvm::CallSite *, u32> call_pair =
+    std::make_pair(new llvm::CallSite(inst), bs->position);
   meta->indirect_call_pairs.push_back(call_pair);
 
   // Ensure the call inst has an associated object node.
-  assert(!as->nodes->find_value_node(ci, true) ||
-         as->nodes->find_object_node(ci));
+  assert(!as->nodes->find_value_node(cs.getInstruction(), true) ||
+         as->nodes->find_object_node(cs.getInstruction()));
   
   assert(!meta->callsite_succ.count(bs->position));
   u32 node_id = constraint_graph->create_node(PNODE);
@@ -1376,7 +1341,23 @@ static void add_call_edges(AnalysisSet *as, BlockState *bs,
   constraint_graph->add_edge(bs->position, node_id);
 
   bs->position = node_id;
-  return;
+}
+
+static void add_call_edges(AnalysisSet *as, BlockState *bs,
+                           llvm::Instruction *inst) {
+
+  assert(inst);
+  
+  llvm::CallSite cs(inst);  
+  llvm::Function *f = calledFunction(cs);
+  
+  if (f) {
+    if (!f->isDeclaration()) {
+      return add_direct_call_edges(as, bs, inst, f);
+    }
+    return add_external_call_edges(as, bs, inst);
+  }
+  return add_indirect_call_edges(as, bs, inst);
 }
 
 static void add_load_edges(AnalysisSet *as, BlockState *bs,
@@ -1407,8 +1388,6 @@ static void add_store_edges(AnalysisSet *as, BlockState *bs,
     bs->position = node_id;
   }
 
-  // There may have been multiple constraints added, but there
-  // will be exactly one store constraint
   for (u32 i = bs->constraints_sz; i < as->constraints->size(); i++) {
     Constraint *c = as->constraints->find(i);
     if (c->type == ConstraintStore) {
@@ -1629,8 +1608,13 @@ static void init_blocks(AnalysisSet *as,
     init_instruction(as, &bs, inst);
   }
 
-  for (llvm::succ_iterator i = llvm::succ_begin(bb),
-         e = llvm::succ_end(bb); i != e; i++) {
+  llvm::succ_iterator i = llvm::succ_begin(bb), e = llvm::succ_end(bb);  
+  if (i == e) {
+    llvm::outs() << "  NO MORE SUCCESSORS " << "\n";
+    return;
+  }
+
+  for (; i != e; i++) {
     // Recurse to process succeeding blocks, using index
     // as the next parent.
     init_blocks(as, block_cache, *i, index);
@@ -1675,4 +1659,32 @@ void init_function_internals(llvm::Module *m, AnalysisSet *as) {
 
     init_function_blocks(as, &block_cache, f);
   }
+}
+
+// ----------** Parallel version ** -------------
+
+#define PARENT_ENTRY_BLOCK MAX_U32
+
+
+FunctionStates process_functions(llvm::Module *m, AnalysisSet *as) {
+}
+
+
+typedef std::vector<MutableFunctionState> FunctionStates;
+
+FunctionStates get_function_states(llvm::Module *m, AnalysisSet *as) {
+  FunctionStates states;    
+
+  for (llvm::Module::iterator i = m->begin(), e = m->end();
+       i != e; i++) {
+    llvm::Function *f = i;
+    if (f->isDeclaration())
+      continue;
+    
+    FunctionState *fs = new FunctionState(as, inst_handlers);
+    fs->process(f);
+    states.push_back(fs->acquire_mutable_state());
+  }
+
+  return std::move(states);
 }

@@ -16,6 +16,7 @@
 #include "llvm/ADT/DenseSet.h"        // for llvm::DenseSet
 #include "llvm/Instructions.h"        // for llvm::CallInst
 #include "llvm/Module.h"              // for llvm::BasicBlock
+#include "llvm/Support/CallSite.h"    // for llvm::CallSite
 #include "llvm/Support/raw_ostream.h" // for llvm::raw_ostream
 
 #include <map>    // for std::map
@@ -216,8 +217,8 @@ struct ConstraintGraphMetadata {
   std::vector<u32> indirect_call_cons;
 
   // (idr_calls)
-  // <idr call, callsite> pairs
-  std::vector<std::pair<llvm::CallInst *, u32> > indirect_call_pairs;
+  // <idr callsite, constraint graph node> pairs
+  std::vector<std::pair<llvm::CallSite *, u32> > indirect_call_pairs;
 
   // (icall_cons)
   llvm::DenseMap<Constraint, std::set<llvm::Instruction*>> ret_arg_call_cons;
@@ -248,7 +249,11 @@ class ConstraintGraph : public SEG {
   // =============================================
   ConstraintGraphMetadata *meta;
 
-   ConstraintGraph(u32 size, u32 max_size) : SEG(max_size) {
+  ConstraintGraph() : SEG(default_graph_max_size) {
+    meta = new ConstraintGraphMetadata();
+  }
+  
+  ConstraintGraph(u32 size, u32 max_size) : SEG(max_size) {
     defs.assign(size, 0);
     uses.assign(size, 0);
     meta = new ConstraintGraphMetadata();
