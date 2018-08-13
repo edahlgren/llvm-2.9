@@ -9,14 +9,16 @@
 #ifndef STRUCTS_H
 #define STRUCTS_H
 
-#include "int.h"  // for u32
+#include "predicates.h" // for struct_type, const_int
+#include "int.h"        // for u32
 
 #include "llvm/ADT/DenseMap.h"    // for llvm::DenseMap
 #include "llvm/Assembly/Writer.h" // for llvm::WriteAsOperand
 #include "llvm/DerivedTypes.h"    // for llvm::StructType
 #include "llvm/LLVMContext.h"     // for llvm::getGlobalContext
-#include "llvm/Type.h"            // for llvm::Type
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Type.h"            // for llvm::Type
+#include "llvm/User.h"            // for llvm::User
 
 #include <vector>  // for std::vector
 #include <utility> // for std::pair, std::make_pair
@@ -204,5 +206,30 @@ class Structs {
     print(llvm::outs(), indent_level);
   }
 };
+
+u32 gep_struct_off(const Structs &structs, llvm::User *u) {
+
+  assert(u);
+
+  u32 off = 0;
+  for (llvm::gep_type_iterator i = llvm::gep_type_begin(*u),
+         e = llvm::gep_type_end(*u); i != e; i++) {
+
+    const llvm::StructType *st = struct_type(*i);
+    if (!st) {
+      continue;
+    }
+
+    const llvm::ConstantInt *op = const_int(i.getOperand());
+    u32 index = op ? op->getZExtValue() : 0;
+      
+    const std::vector<u32> offsets = structs.get_off(st);
+    assert(index < offsets.size());
+
+    off += offsets[index];
+  }
+
+  return off;
+}
 
 #endif // end STRUCTS_H

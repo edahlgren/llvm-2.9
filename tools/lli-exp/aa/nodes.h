@@ -123,7 +123,7 @@ public:
 
 class Nodes {
 public:
-  u32 next;
+  u32 start;
   std::vector<Node *> nodes;
 
   // Map values to their node ID.
@@ -134,11 +134,16 @@ public:
   llvm::DenseMap<llvm::Value*, u32> object_nodes;
   llvm::DenseMap<llvm::Function*, u32> ret_nodes;
   llvm::DenseMap<llvm::Function*, u32> vararg_nodes;
-  
+
   Nodes() {}
+  Nodes(u32 start) : start(start) {}
 
   u32 size() {
     return nodes.size();
+  }
+
+  u32 next() {
+    return size();
   }
 
   u32 rep(u32 i) {
@@ -159,35 +164,35 @@ public:
   u32 add_unreachable(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
     u32 index = nodes.size();
     nodes.push_back(new Node(v, obj_sz, weak));
-    return index;
+    return start + index;
   }
 
   u32 add_value(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
     nodes.push_back(new Node(v, obj_sz, weak));
     value_nodes[v] = id;
-    return id;
+    return start + id;
   }
 
   u32 add_object(llvm::Value *v, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
     nodes.push_back(new Node(v, obj_sz, weak));
     object_nodes[v] = id;
-    return id;
+    return start + id;
   }
 
   u32 add_ret(llvm::Function *f, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
     nodes.push_back(new Node(f, obj_sz, weak));
     ret_nodes[f] = id;
-    return id;
+    return start + id;
   }
 
   u32 add_vararg(llvm::Function *f, u32 obj_sz = 0, bool weak = false) {
     u32 id = nodes.size();
     nodes.push_back(new Node(f, obj_sz, weak));
     vararg_nodes[f] = id;
-    return id;
+    return start + id;
   }
 
   Node *find_node(u32 id) {
@@ -209,7 +214,7 @@ public:
     }
 
     assert(i->second && "Failed to find non-zero value");
-    return i->second;
+    return start + i->second;
   }
   
   u32 find_object_node(llvm::Value *v, bool allow_null = false) const {
@@ -226,7 +231,7 @@ public:
     }
 
     assert(i->second && "Failed to find non-zero value");
-    return i->second;
+    return start + i->second;
   }
   
   u32 find_ret_node(llvm::Function *f) const {
@@ -246,7 +251,8 @@ public:
 
     assert(i != ret_nodes.end());
     assert(i->second && "Failed to find non-zero ret node");
-    return i->second;
+
+    return start + i->second;
   }
   
   u32 find_vararg_node(llvm::Function *f) const {
@@ -265,7 +271,8 @@ public:
 
     assert(i != vararg_nodes.end());
     assert(i->second && "Failed to find non-zero vararg node");
-    return i->second;
+
+    return start + i->second;
   }
       
   bool contains_value(llvm::Value *v) {
@@ -285,11 +292,6 @@ public:
     return rep(n);
   }  
   
-  u32 merge(u32 a, u32 b) {
-    // TODO: implement.
-    return a;
-  }
-
   void validate() {
     // TODO: implement.
     return;
@@ -302,7 +304,7 @@ public:
     os.indent(l) << "nodes {" << "\n";
     for (u32 i = 0; i < nodes.size(); i++) {
       Node *node = nodes[i];
-      os.indent(l + 1) << i << ":\t" << node->to_string() << "\n";
+      os.indent(l + 1) << start + i << ":\t" << node->to_string() << "\n";
     }
     os.indent(l) << "}";
 
@@ -317,7 +319,7 @@ public:
     for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
            value_nodes.begin(), e = value_nodes.end(); i != e; i++) {
       assert(i->first);
-      os.indent(l + 1) << i->second << ":\t";
+      os.indent(l + 1) << start + i->second << ":\t";
       llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
       os.indent(l + 1) << "\n";
     }
@@ -334,7 +336,7 @@ public:
     for (llvm::DenseMap<llvm::Value *, u32>::iterator i =
            object_nodes.begin(), e = object_nodes.end(); i != e; i++) {
       assert(i->first);
-      os.indent(l + 1) << i->second << ":\t";
+      os.indent(l + 1) << start + i->second << ":\t";
       llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
       os.indent(l + 1) << "\n";
     }
@@ -351,7 +353,7 @@ public:
     for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
            ret_nodes.begin(), e = ret_nodes.end(); i != e; i++) {
       assert(i->first);
-      os.indent(l + 1) << i->second << ":\t";
+      os.indent(l + 1) << start + i->second << ":\t";
       llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
       os.indent(l + 1) << "\n";
     }
@@ -368,7 +370,7 @@ public:
     for (llvm::DenseMap<llvm::Function *, u32>::iterator i =
            vararg_nodes.begin(), e = vararg_nodes.end(); i != e; i++) {
       assert(i->first);
-      os.indent(l + 1) << i->second << ":\t";
+      os.indent(l + 1) << start + i->second << ":\t";
       llvm::WriteAsOperand(os.indent(l + 1), i->first, false);
       os.indent(l + 1) << "\n";
     }

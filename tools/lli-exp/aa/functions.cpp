@@ -1,4 +1,15 @@
+//===- functions.cpp ------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+//
+// Description ...
+//
+//===----------------------------------------------------------------------===//
 
+#include "function_state.h"
+#include "predicates.h"
+
+#include "llvm/Module.h"           // for llvm::Function, llvm::BasicBlock
 
 void FunctionState::process(const llvm::Function *f) {
   assert(!f->isDeclaration());

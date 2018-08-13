@@ -6,9 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "analysis_set.h"
-#include "block_state.h"
 #include "function_state.h"
+#include "global_state.h"
 #include "predicates.h"
 
 #include "llvm/Instructions.h"     // for llvm::CallInst, llvm::InvokeInst,
@@ -27,7 +26,7 @@ static u32 find_value_node_const_ptr(FunctionState *fs, llvm::Value *v) {
   llvm::WriteAsOperand(llvm::outs(), v, false);
   llvm::outs() << "\n";
   
-  u32 node_id = fs->nodes->find_value_node(v, true);
+  u32 node_id = fs->find_value_node(v, true);
   if (node_id) {
     return node_id;
   }
@@ -52,12 +51,12 @@ static u32 find_value_node_const_ptr(FunctionState *fs, llvm::Value *v) {
     return find_value_node_const_ptr(fs, e->getOperand(0));
       
   case llvm::Instruction::IntToPtr:
-    process_int2ptr(as, e);
-    return fs->nodes->find_value_node(e);
+    process_int2ptr(fs, e);
+    return fs->find_value_node(e);
 
   case llvm::Instruction::GetElementPtr:
-    process_gep(as, e);
-    return fs->nodes->find_value_node(e);
+    process_gep(fs, e);
+    return fs->find_value_node(e);
 
   default:
     assert(false && "unknown opcode in const pointer expression");
@@ -263,7 +262,7 @@ static void process_load(FunctionState *fs,
   
   llvm::LoadInst *li = llvm::cast<llvm::LoadInst>(inst);
 
-  u32 node_id = fs->nodes->find_value_node(li);
+  u32 node_id = fs->find_value_node(li);
   u32 src_node_id = find_value_node_const_ptr(fs, li->getPointerOperand());
   if (!src_node_id) {
     return;
@@ -329,7 +328,7 @@ static void process_return(FunctionState *fs,
     return;
 
   llvm::Function *f = ri->getParent()->getParent();
-  u32 ret_node_id = fs->nodes->find_ret_node(f);
+  u32 ret_node_id = fs->find_ret_node(f);
   assert(ret_node_id);
 
   u32 src_node_id = find_value_node_const_ptr(fs, ret_value);
@@ -353,7 +352,7 @@ static void process_alloc(FunctionState *fs,
   assert(inst);
   
   llvm::AllocaInst *ai = llvm::cast<llvm::AllocaInst>(inst);
-  u32 node_id = fs->nodes->find_value_node(ai);
+  u32 node_id = fs->find_value_node(ai);
 
   // Find out which type of data was allocated.
   bool weak =  false;
@@ -370,41 +369,16 @@ static void process_alloc(FunctionState *fs,
     const std::vector<u32> &sz= fs->global->structs.get_sz(st);
     
     for (u32 i = 0; i < sz.size(); i++) {
-      u32 _obj_id = fs->nodes->add_object(ai, sz[i], weak);         
+      u32 _obj_id = fs->add_object(ai, sz[i], weak);         
       if (obj_id != NodeNone)
         obj_id = _obj_id;
     }
   }
 
   if (obj_id == NodeNone)
-    obj_id = fs->nodes->add_object(inst, 1, weak);
+    obj_id = fs->add_object(inst, 1, weak);
 
   fs->constraints->add(ConstraintAddrOf, node_id, obj_id);
-}
-
-u32 gep_off(AnalysisSet *as, llvm::User *u) {
-
-  assert(u);
-
-  u32 off = 0;
-  for (llvm::gep_type_iterator i = llvm::gep_type_begin(*u),
-         e = llvm::gep_type_end(*u); i != e; i++) {
-
-    const llvm::StructType *st = struct_type(*i);
-    if (!st) {
-      continue;
-    }
-
-    const llvm::ConstantInt *op = const_int(i.getOperand());
-    u32 index = op ? op->getZExtValue() : 0;
-      
-    const std::vector<u32> offsets = as->structs.get_off(st);
-    assert(index < offsets.size());
-
-    off += offsets[index];
-  }
-
-  return off;
 }
 
 static void process_gep(FunctionState *fs,
@@ -413,7 +387,7 @@ static void process_gep(FunctionState *fs,
   assert(inst);
 
   llvm::GetElementPtrInst *gi = llvm::cast<llvm::GetElementPtrInst>(inst);
-  u32 node_id = fs->nodes->find_value_node(gi);
+  u32 node_id = fs->find_value_node(gi);
 
   llvm::Value *s = gi->getPointerOperand();  
   if (llvm::isa<llvm::ConstantPointerNull>(s)) {
@@ -426,7 +400,7 @@ static void process_gep(FunctionState *fs,
   u32 sub_node_id = find_value_node_const_ptr(fs, s);
   assert(sub_node_id && "non-null GEP operand has no node");
 
-  u32 off = gep_off(fs->global, gi);
+  u32 off = gep_off(fs->global->structs, gi);
   fs->constraints->add(ConstraintGEP, node_id, sub_node_id, off);
 }
 
@@ -438,17 +412,17 @@ void process_int2ptr(FunctionState *fs,
   llvm::Value *op = 0;
 
   if (llvm::IntToPtrInst *ii = get_int_to_ptr(v)) {
-    dest_id = fs->nodes->find_value_node(ii);
+    dest_id = fs->find_value_node(ii);
     op = ii->getOperand(0);    
   } else if (llvm::GetElementPtrInst *gi = get_gep(v)) {
     assert(is_const_null_ptr(gi->getOperand(0)) &&
            gi->getNumOperands() == 2 &&
            "only single-index GEP of null is used for i20");
-    dest_id = fs->nodes->find_value_node(gi);
+    dest_id = fs->find_value_node(gi);
     op = ii->getOperand(1);
   } else if (llvm::ConstantExpr *expr = get_const_expr(v)) {
-    assert(!fs->nodes->contains_value(expr));
-    fs->nodes->add_value(expr);
+    assert(!fs->contains_value(expr));
+    fs->add_value(expr);
     
     if (expr->getOpcode() == llvm::Instruction::IntToPtr) {
       op = expr->getOperand(0);
@@ -494,14 +468,14 @@ static void process_bitcast(FunctionState *fs,
   assert(inst);
   
   llvm::BitCastInst *bi = llvm::cast<llvm::BitCastInst>(inst);
-  u32 node_id = fs->nodes->find_value_node(bi);
+  u32 node_id = fs->find_value_node(bi);
 
   llvm::Value *src = bi->getOperand(0);
   assert(is_pointer(src));
 
   u32 sub_node_id = find_value_node_const_ptr(fs, src);
   if (sub_node_id)
-    as->constraints->add(ConstraintCopy, node_id, sub_node_id);
+    fs->constraints->add(ConstraintCopy, node_id, sub_node_id);
 }
 
 static void process_phi(FunctionState *fs,
@@ -510,7 +484,7 @@ static void process_phi(FunctionState *fs,
   assert(inst);
   
   llvm::PHINode *pn = llvm::cast<llvm::PHINode>(inst);
-  u32 node_id = fs->nodes->find_value_node(pn);
+  u32 node_id = fs->find_value_node(pn);
 
   for (u32 i = 0; i < pn->getNumIncomingValues(); i++) {
     llvm::Value *v = pn->getIncomingValue(i);
@@ -526,7 +500,7 @@ static void process_select(FunctionState *fs,
   assert(inst);
   
   llvm::SelectInst *si = llvm::cast<llvm::SelectInst>(inst);
-  u32 node_id = fs->nodes->find_value_node(si);
+  u32 node_id = fs->find_value_node(si);
 
   llvm::Value *true_value = si->getOperand(1);
   u32 true_node_id = find_value_node_const_ptr(fs, true_value);
@@ -547,10 +521,10 @@ static void process_vararg(FunctionState *fs,
   assert(inst);
 
   llvm::VAArgInst *vi = llvm::cast<llvm::VAArgInst>(inst);
-  u32 node_id = fs->nodes->find_value_node(vi);
+  u32 node_id = fs->find_value_node(vi);
 
   llvm::Function *f = inst->getParent()->getParent();
-  u32 vararg_id = fs->nodes->find_vararg_node(f);
+  u32 vararg_id = fs->find_vararg_node(f);
   assert(vararg_id && "va_list args not handled yet");
 
   fs->constraints->add(ConstraintCopy, node_id, vararg_id);
@@ -563,8 +537,8 @@ static bool ext_no_struct_alloc(FunctionState *fs, llvm::Function *f) {
 static void process_no_struct_callee(FunctionState *fs,
                                      u32 node_id) {
   
-  llvm::Value *v = fs->nodes->find_node(node_id)->val;
-  u32 obj_id = fs->nodes->add_object(v, 1, true);
+  llvm::Value *v = fs->find_node(node_id)->val;
+  u32 obj_id = fs->add_object(v, 1, true);
   fs->constraints->add(ConstraintAddrOf, node_id, obj_id);
 }
 
@@ -589,14 +563,14 @@ static void process_alloc_callee(FunctionState *fs,
     const std::vector<u32> &sz= fs->global->structs.get_sz(st);
 
     for (u32 i = 0; i < sz.size(); i++) {
-      u32 _obj_id = fs->nodes->add_object(inst, sz[i], true);         
+      u32 _obj_id = fs->add_object(inst, sz[i], true);         
       if (obj_id != NodeNone)
         obj_id = _obj_id;
     }
   }
 
   if (obj_id == NodeNone)
-    obj_id = fs->nodes->add_object(inst, 1, true);
+    obj_id = fs->add_object(inst, 1, true);
 
   if (f)
     fs->constraints->add(ConstraintAddrOf, node_id, obj_id);
@@ -621,8 +595,8 @@ static void process_static_callee(FunctionState *fs,
   llvm::Instruction *inst = cs.getInstruction();
 
   if (fs->global->ext_info.has_static2(f)) {
-    obj_id = fs->nodes->add_object(inst, 2, true);
-    fs->nodes->add_object(inst, 1, true);
+    obj_id = fs->add_object(inst, 2, true);
+    fs->add_object(inst, 1, true);
     fs->constraints->add(ConstraintAddrOf, node_id, obj_id);
   } else {
     const llvm::Type *t = inst->getType()->getContainedType(0);
@@ -630,13 +604,13 @@ static void process_static_callee(FunctionState *fs,
       const std::vector<u32> &sz= fs->global->structs.get_sz(st);
         
       for (u32 i = 0; i < sz.size(); i++) {
-        u32 _obj_id = fs->nodes->add_object(inst, sz[i], true);         
+        u32 _obj_id = fs->add_object(inst, sz[i], true);         
         if (obj_id != NodeNone)
           obj_id = _obj_id;
       }
     }
     if (obj_id == NodeNone)
-      obj_id = fs->nodes->add_object(inst, 1, true);
+      obj_id = fs->add_object(inst, 1, true);
   }
     
   fs->global->static_returns[func_name] = obj_id;
@@ -657,22 +631,22 @@ static void process_callee(FunctionState *fs,
     return process_alloc_callee(fs, cs, node_id);
   }
 
-  if (as->ext_info.has_static(f)) {
+  if (fs->global->module->ext_info.has_static(f)) {
     return process_static_callee(fs, f, cs, node_id);
   }
 }
 
-static void __process_direct_call(AnalysisSet *as,
+static void __process_direct_call(FunctionState *fs,
                                   llvm::CallSite &cs,
                                   llvm::Function *f) {
   assert(f);
 
   if (is_pointer(cs.getType())) {
-    u32 node_id = fs->nodes->find_value_node(cs.getInstruction());
+    u32 node_id = fs->find_value_node(cs.getInstruction());
     if (!is_pointer(f->getReturnType())) {
       fs->constraints->add(ConstraintAddrOf, node_id, NodeUnknownTarget);
     } else {
-      u32 ret_node_id = fs->nodes->find_ret_node(f);
+      u32 ret_node_id = fs->find_ret_node(f);
       assert(ret_node_id);
       fs->constraints->add(ConstraintCopy, node_id, ret_node_id);
     }
@@ -691,12 +665,12 @@ static void __process_direct_call(AnalysisSet *as,
     if (!is_pointer(fa->getType()))
       continue;
 
-    u32 fa_node_id = fs->nodes->find_value_node(fa);
+    u32 fa_node_id = fs->find_value_node(fa);
     if (!is_pointer(aa)) {
       fs->constraints->add(ConstraintAddrOf, fa_node_id,
                            NodeUnknownTarget);
     } else {
-      u32 aa_node_id = fs->nodes->find_value_node(aa);
+      u32 aa_node_id = fs->find_value_node(aa);
       if (aa_node_id)
         fs->constraints->add(ConstraintCopy, fa_node_id, aa_node_id);
     }
@@ -707,7 +681,7 @@ static void __process_direct_call(AnalysisSet *as,
     return;
   }
 
-  u32 va_node_id = fs->nodes->find_vararg_node(f);
+  u32 va_node_id = fs->find_vararg_node(f);
   assert(va_node_id);
 
   for (; arg_it != arg_end; arg_it++) {
@@ -750,7 +724,7 @@ static void process_EFT_L_A(FunctionState *fs,
   if (!is_pointer(inst))
     return;
 
-  u32 node_id = fs->nodes->find_value_node(inst);
+  u32 node_id = fs->find_value_node(inst);
   u32 i_arg = eft_la_num_args(fs, f);
 
   llvm::Value *src= cs.getArgument(i_arg);
@@ -799,7 +773,7 @@ static u32 get_max_offset(FunctionState *fs, llvm::Value *v) {
         t = at->getElementType();
       
       if (const llvm::StructType *st = llvm::dyn_cast<llvm::StructType>(t)){
-        u32 sz = as->structs.get_sz(st).size();
+        u32 sz = fs->global->module->structs.get_sz(st).size();
         if (msz < sz)
           msz = sz;
       }
@@ -829,7 +803,7 @@ static void add_load_store_cons(FunctionState *fs,
   }
     
   for (u32 i = 0; i < size; i++) {
-    u32 tnode_id = fs->nodes->add_unreachable(0);
+    u32 tnode_id = fs->add_unreachable(0);
     fs->constraints->add(ConstraintLoad, tnode_id, src_index, i);
     fs->constraints->add(ConstraintStore, dest_index, tnode_id, i);
   }
@@ -848,8 +822,8 @@ static void process_EFT_L_A0__A0R_A1R(FunctionState *fs,
   llvm::Instruction *inst = cs.getInstruction();
   if (is_pointer(inst->getType()))
     fs->constraints->add(ConstraintCopy,
-                         fs->nodes->find_value_node(inst),
-                         fs->nodes->find_value_node(dest));
+                         fs->find_value_node(inst),
+                         fs->find_value_node(dest));
 }
 
 static void process_EFT_A1R_A0R(FunctionState *fs,
@@ -930,7 +904,7 @@ static void process_EFT_L_A0__A2R_A0(FunctionState *fs,
   
   llvm::Instruction *inst = cs.getInstruction();
   if (is_pointer(inst)) {
-    u32 node_id = fs->nodes->find_value_node(inst);
+    u32 node_id = fs->find_value_node(inst);
     llvm::Value *src = cs.getArgument(0);
 
     if (!is_pointer(src->getType())) {
@@ -994,17 +968,17 @@ static void process_EFT_A_NEW(FunctionState *fs,
     //  pointed to by any program variable, but for now we require
     //  all obj_nodes to have one.
     for (u32 i = 0; i < sz.size(); i++) {
-      u32 _obj_id = fs->nodes->add_object(dest, sz[i], true);
+      u32 _obj_id = fs->add_object(dest, sz[i], true);
       if (obj_id == NodeNone)
         obj_id = _obj_id;
     }
   } else {
-    obj_id = fs->nodes->add_object(dest, 1, true);
+    obj_id = fs->add_object(dest, 1, true);
   }
   
   assert(obj_id != NodeNone);
   
-  u32 node_id = fs->nodes->add_unreachable(0);
+  u32 node_id = fs->add_unreachable(0);
   fs->constraints->add(ConstraintAddrOf, node_id, obj_id);
   fs->constraints->add(ConstraintStore, dest_node_id, node_id);
 }
@@ -1102,7 +1076,7 @@ static void __process_indirect_call(FunctionState *fs,
   meta->indirect_call_func_nodes.insert(called_id);
 
   if (is_pointer(cs.getType())) {
-    u32 node_id = fs->nodes->find_value_node(inst);
+    u32 node_id = fs->find_value_node(inst);
     fs->constraints->add(ConstraintLoad, node_id, called_id,
                          FUNC_NODE_OFF_RET);
 
@@ -1256,7 +1230,7 @@ void add_indirect_call_edges(FunctionState *fs,
     return;
 
   // Is there no value at the called value?
-  u32 fp = fs->nodes->find_value_node(cs.getCalledValue(), true);
+  u32 fp = fs->find_value_node(cs.getCalledValue(), true);
   if (!fp)
     return;
 
@@ -1278,8 +1252,8 @@ void add_indirect_call_edges(FunctionState *fs,
   meta->indirect_call_pairs.push_back(call_pair);
 
   // Ensure the call inst has an associated object node.
-  assert(!fs->nodes->find_value_node(cs.getInstruction(), true) ||
-         fs->nodes->find_object_node(cs.getInstruction()));
+  assert(!fs->find_value_node(cs.getInstruction(), true) ||
+         fs->find_object_node(cs.getInstruction()));
   
   assert(!meta->callsite_succ.count(bs->position));
   u32 node_id = fs->constraint_graph->create_node(PNODE);
@@ -1329,7 +1303,7 @@ static void process_call(FunctionState *fs,
   llvm::CallSite cs(inst);
   llvm::Function *f = calledFunction(cs);
 
-  u32 node_id = fs->nodes->find_value_node(inst, true);
+  u32 node_id = fs->find_value_node(inst, true);
   if (node_id) {
     process_callee(fs, f, cs, node_id);
   }

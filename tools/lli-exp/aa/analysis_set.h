@@ -50,38 +50,15 @@ class AnalysisSet {
   // Insert all of the nodes you ever need to insert from the
   // module.
   AnalysisSet(llvm::Module *m) {
+    nodes = new Nodes();
+    constraints = new Constraints();
+    cgraph = new ConstraintGraph();
+    
     init(m);
   }
 
  private:
   void init(llvm::Module *m);
 };
-
-class IDSet {
- public:
-  llvm::DenseMap<u32, u32> cache;
-
-  void add(u32 id, u32 num_fields) {
-    cache[id] = num_fields;
-  }
-
-  bool lookup(u32 id, u32 *num_fields = 0) {
-    llvm::DenseMap<u32, u32>::iterator i = cache.find(id);
-    if (i == cache.end()) {
-      return false;
-    }
-    if (num_fields)  {
-      *num_fields = i->second;
-    }
-    return true;
-  }
-};
-
-u32 gep_off(AnalysisSet *as, llvm::User *u);
-
-void init_function_internals(llvm::Module *m, AnalysisSet *as);
-
-void print_named_constraints(AnalysisSet *as, int l);
-
 
 #endif // end ANALYSIS_H

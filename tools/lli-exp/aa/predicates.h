@@ -42,6 +42,72 @@ bool is_global_value(llvm::Value *v) {
   return llvm::isa<llvm::GlobalValue>(v);
 }
 
+static bool is_null(llvm::Constant *c) {
+  return c->isNullValue();
+}
+
+static bool is_undefined(llvm::Value *v) {
+  return llvm::isa<llvm::UndefValue>(v);
+}
+
+static bool is_single_value_type(llvm::Value *v) {
+  return v->getType()->isSingleValueType();
+}
+
+static bool is_ptr_to_int(llvm::ConstantExpr *expr) {
+  return expr && expr->getOpcode() == llvm::Instruction::PtrToInt;
+}
+
+static bool is_int_to_ptr(llvm::ConstantExpr *expr) {
+  return expr && expr->getOpcode() == llvm::Instruction::IntToPtr;
+}
+
+static bool is_gep(llvm::ConstantExpr *expr) {
+  return expr && expr->getOpcode() == llvm::Instruction::GetElementPtr;
+}
+
+static void assert_valid_const_expr(llvm::ConstantExpr *expr) {  
+  assert(is_ptr_to_int(expr) ||
+         is_int_to_ptr(expr) ||
+         is_gep(expr));
+}
+
+static llvm::ConstantExpr *const_expr(llvm::Value **c) {
+  for (llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(*c);
+       expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(*c)) {
+      if (expr->getOpcode() == llvm::Instruction::BitCast) {
+        *c = expr->getOperand(0);
+      } else {
+        assert_valid_const_expr(expr);
+        return expr;
+      }
+  }
+  
+  return nullptr;
+}
+
+static llvm::ConstantExpr *const_expr(llvm::Constant **c) {
+  for (llvm::ConstantExpr *expr = llvm::dyn_cast<llvm::ConstantExpr>(*c);
+       expr; expr = llvm::dyn_cast_or_null<llvm::ConstantExpr>(*c)) {
+      if (expr->getOpcode() == llvm::Instruction::BitCast) {
+        *c = expr->getOperand(0);
+      } else {
+        assert_valid_const_expr(expr);
+        return expr;
+      }
+  }
+  
+  return nullptr;
+}
+
+static llvm::ConstantStruct *const_struct(llvm::Constant *c) {
+  return llvm::dyn_cast<llvm::ConstantStruct>(c);
+}
+
+static llvm::ConstantArray *const_array(llvm::Constant *c) {
+  return llvm::dyn_cast<llvm::ConstantArray>(c);
+}
+
 const llvm::ConstantInt *const_int(llvm::Value *v) {
   return llvm::dyn_cast<llvm::ConstantInt>(v);
 }
