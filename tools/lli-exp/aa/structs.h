@@ -16,6 +16,7 @@
 #include "llvm/Assembly/Writer.h" // for llvm::WriteAsOperand
 #include "llvm/DerivedTypes.h"    // for llvm::StructType
 #include "llvm/LLVMContext.h"     // for llvm::getGlobalContext
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Type.h"            // for llvm::Type
 #include "llvm/User.h"            // for llvm::User
@@ -207,8 +208,7 @@ class Structs {
   }
 };
 
-u32 gep_struct_off(const Structs &structs, llvm::User *u) {
-
+inline u32 gep_struct_off(Structs &structs, const llvm::User *u) {
   assert(u);
 
   u32 off = 0;

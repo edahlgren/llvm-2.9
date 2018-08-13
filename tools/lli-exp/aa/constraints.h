@@ -198,15 +198,15 @@ struct ConstraintGraphMetadata {
 
   // (fun_start)
   // Start nodes for Functions  
-  std::map<llvm::Function *, u32> func_start_nodes;
+  std::map<const llvm::Function *, u32> func_start_nodes;
 
   // (fun_ret)
   // function -> return node
-  std::map<llvm::Function *, u32> func_ret_nodes;
+  std::map<const llvm::Function *, u32> func_ret_nodes;
 
   // (fun_cs)
   // callsite -> function targets
-  std::map<u32, std::vector<llvm::Function *> > func_callsites;
+  std::map<u32, std::vector<const llvm::Function *>> func_callsites;
 
   // (call_succ)
   // callsite -> local successor
@@ -218,10 +218,10 @@ struct ConstraintGraphMetadata {
 
   // (idr_calls)
   // <idr callsite, constraint graph node> pairs
-  std::vector<std::pair<llvm::CallSite *, u32> > indirect_call_pairs;
+  std::vector<std::pair<llvm::ImmutableCallSite *, u32>> indirect_call_pairs;
 
   // (icall_cons)
-  llvm::DenseMap<Constraint, std::set<llvm::Instruction*>> ret_arg_call_cons;
+  llvm::DenseMap<Constraint, std::set<const llvm::Instruction *>> ret_arg_call_cons;
 
   // (ind_calls)
   std::set<u32> indirect_call_func_nodes;

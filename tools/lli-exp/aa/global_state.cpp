@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "global_state.h"
-#include "predicates.h"
+#include "structs.h"
 
 static void assert_ret_next(GlobalState *gs, u32 obj_node_id) {
   u32 ret_node_id = obj_node_id + FUNC_NODE_OFF_RET;
@@ -25,7 +25,7 @@ static void assert_obj_sz(GlobalState *gs, u32 obj_node_id) {
 }
 
 static void init_addr_taken_function_args(GlobalState *gs,
-                                          llvm::Function *f,
+                                          const llvm::Function *f,
                                           u32 obj_node_id) {
   // Sanity check.
   assert_ret_next(gs, obj_node_id);
@@ -39,7 +39,7 @@ static void init_addr_taken_function_args(GlobalState *gs,
   // Find the last pointer argument.
   u32 last_ptr = OVERFLOW_U32;
   u32 i = 0;
-  for (llvm::Function::arg_iterator arg = f->arg_begin(),
+  for (llvm::Function::const_arg_iterator arg = f->arg_begin(),
          end = f->arg_end(); arg != end; i++, arg++) {
     if (is_pointer(arg)) {
       last_ptr = i;
@@ -53,9 +53,9 @@ static void init_addr_taken_function_args(GlobalState *gs,
   // each argument value to a node.
   if (last_ptr != OVERFLOW_U32) {
     u32 j = 0;
-    for (llvm::Function::arg_iterator arg = f->arg_begin(),
+    for (llvm::Function::const_arg_iterator arg = f->arg_begin(),
            end = f->arg_end(); j != last_ptr && arg != end; j++, arg++) {
-
+      
       // Map argument to a node that can be found by value.
       u32 arg_id = gs->nodes->add_value(arg);
       assert(arg_id == obj_node_id + FUNC_NODE_OFF_ARG0 + j);
@@ -79,7 +79,7 @@ static void init_addr_taken_function_args(GlobalState *gs,
 }
 
 static void init_addr_taken_function_signature(GlobalState *gs,
-                                               llvm::Function *f,
+                                               const llvm::Function *f,
                                                std::string entry_point) {
 
   assert(f && f->hasAddressTaken());
@@ -117,10 +117,10 @@ static void init_addr_taken_function_signature(GlobalState *gs,
 }
 
 static void init_normal_function_args(GlobalState *gs,
-                                      llvm::Function *f) {  
+                                      const llvm::Function *f) {  
 
   // Map each pointer argument value to a node.
-  for (llvm::Function::arg_iterator arg = f->arg_begin(),
+  for (llvm::Function::const_arg_iterator arg = f->arg_begin(),
          end = f->arg_end(); arg != end; arg++) {
 
     llvm::outs() << "  arg: ";
@@ -144,7 +144,7 @@ static void init_normal_function_args(GlobalState *gs,
 }
 
 static void init_normal_function_signature(GlobalState *gs,
-                                           llvm::Function *f,
+                                           const llvm::Function *f,
                                            std::string entry_point) {
 
   // Treat the entry point's args and external function
@@ -233,7 +233,7 @@ static u32 init_gep(GlobalState *gs,
 
   // Lookup or add a value node for the const expr.
   u32 node_id = gs->nodes->find_value_node(expr, true);
-  if (gs->done_set->lookup(node_id))
+  if (gs->done_set.lookup(node_id))
     // Already processed.
     return node_id;
 
@@ -242,7 +242,7 @@ static u32 init_gep(GlobalState *gs,
   }
     
   // Prematurely mark processed for cleaner returns.
-  gs->done_set->add(node_id, 1);
+  gs->done_set.add(node_id, 1);
   
   llvm::Value *ptr = expr->getOperand(0);
   llvm::ConstantExpr *sub_expr = const_expr(&ptr);
@@ -260,16 +260,16 @@ static u32 init_gep(GlobalState *gs,
   }
 
   gs->constraints->add(ConstraintGEP, node_id, ptr_node_id,
-                       gep_off(as, expr));
+                       gep_struct_off(gs->module->structs, expr));
          
   if (is_gep(sub_expr)) {
-    init_gep(this, sub_expr);
+    init_gep(gs, sub_expr);
   }
 
   return node_id;
 }
 
-u32 _init_global_value(GlobalState *gs, llvm::Constant *c, u32 obj_id);
+u32 init_global_value(GlobalState *gs, llvm::Constant *c, u32 obj_id);
 
 static u32 __init_global_value(GlobalState *gs,
                                llvm::Constant *c,
@@ -301,8 +301,8 @@ static u32 __init_global_value(GlobalState *gs,
     // Handle structs.
     u32 off = 0;
     for (u32 i = 0; i < cs->getNumOperands(); i++) {
-      off += _init_global_value(gs, cs->getOperand(i),
-                                obj_id + off, done_set);
+      off += init_global_value(gs, cs->getOperand(i),
+                                obj_id + off);
     }
     return off;
   }
@@ -311,8 +311,8 @@ static u32 __init_global_value(GlobalState *gs,
     // Handle arrays.
     u32 off = 0;
     for (u32 i = 0; i < ca->getNumOperands(); i++) {
-      off += _init_global_value(gs, ca->getOperand(i),
-                                obj_id + off, done_set);
+      off += init_global_value(gs, ca->getOperand(i),
+                                obj_id + off);
     }
     return off;
   }
@@ -344,12 +344,12 @@ u32 init_global_value(GlobalState *gs,
   assert(c);
 
   u32 num_fields;
-  if (!gs->done_set->lookup(obj_id, &num_fields)) {
+  if (!gs->done_set.lookup(obj_id, &num_fields)) {
     return num_fields;
   }
   
-  num_fields = __init_global_value(gs, c, obj_id, done_set);
-  gs->done_set->add(obj_id, num_fields);
+  num_fields = __init_global_value(gs, c, obj_id);
+  gs->done_set.add(obj_id, num_fields);
 
   return num_fields;
 }

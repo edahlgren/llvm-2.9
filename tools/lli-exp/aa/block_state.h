@@ -9,18 +9,20 @@
 #ifndef BLOCK_STATE_H
 #define BLOCK_STATE_H
 
+#include "int.h"  // for u32
+
 #include "llvm/Module.h"           // for llvm::BasicBlock
 
 #include <map>    // for std::map
 
 class BlockState {
 public:
-  llvm::BasicBlock *block;
+  const llvm::BasicBlock *block;
   u32 position;
   bool contains_call;
   u32 constraints_sz;
 
-  BlockState(llvm::BasicBlock *bb, u32 position) :
+  BlockState(const llvm::BasicBlock *bb, u32 position) :
     block(bb),
     position(position),
     contains_call(false),
@@ -29,10 +31,10 @@ public:
 
 class BlockCache {
 public:
-  std::map<llvm::BasicBlock *, u32> cache;
+  std::map<const llvm::BasicBlock *, u32> cache;
   
-  u32 lookup(llvm::BasicBlock *block) {
-    std::map<llvm::BasicBlock *, u32>::iterator it =
+  u32 lookup(const llvm::BasicBlock *block) {
+    std::map<const llvm::BasicBlock *, u32>::iterator it =
       cache.find(block);
     
     if (it != cache.end()) {
@@ -43,7 +45,7 @@ public:
     return 0;
   }
 
-  void insert(llvm::BasicBlock *block, u32 index) {
+  void insert(const llvm::BasicBlock *block, u32 index) {
     cache[block] = index;
   }
 };
